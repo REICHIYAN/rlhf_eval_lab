@@ -1,0 +1,9 @@
+# rlhf_eval_lab/config/presets/hf_gpt2.yaml
+# HF backend 用（任意依存・論文用）
+
+hf:
+  model_name: gpt2
+  temperature: 1.0
+
+eval:
+  max_new_tokens: 32

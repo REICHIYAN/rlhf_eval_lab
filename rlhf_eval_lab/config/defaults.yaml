@@ -1,0 +1,24 @@
+# rlhf_eval_lab/config/defaults.yaml
+# 全ハイパラ・閾値はここ（SSOT）
+# tiny_lm.arch は gru 固定（将来拡張は設計上の余地のみ）
+
+tiny_lm:
+  arch: gru
+  emb_dim: 64
+  hidden_dim: 128
+  num_layers: 1
+  max_seq_len: 128
+
+train:
+  lr: 0.001
+  grad_clip: 1.0
+
+eval:
+  max_new_tokens: 16
+
+ppo:
+  kl_beta: 0.1
+
+hf:
+  model_name: gpt2
+  temperature: 1.0

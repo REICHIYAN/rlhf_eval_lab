@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlhf_eval_lab"
+version = "0.1.0"
+description = "RLHF evaluation lab: run -> validate -> report (always-filled tables)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "REICHIYAN" }]
+
+dependencies = [
+  "torch",
+  "PyYAML",
+]
+
+[project.optional-dependencies]
+hf = ["transformers"]
+
+[project.scripts]
+rlhf-lab = "rlhf_eval_lab.cli.main:main"
+
+[tool.setuptools]
+packages = ["rlhf_eval_lab"]
+
+[tool.setuptools.package-data]
+rlhf_eval_lab = ["config/*.yaml", "config/presets/*.yaml"]
