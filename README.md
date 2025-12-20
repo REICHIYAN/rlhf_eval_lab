@@ -1,7 +1,10 @@
 # RLHF-Eval-Lab
 
 RLHF-style methods evaluation harness that **always** produces fully-populated Markdown tables (no empty cells).
-This repository is currently in **DoD / OSS reliability phase** (sanity-tier numbers, not paper-grade claims).
+
+This repository has **completed the DoD / OSS reliability phase** (sanity-tier numbers, not paper-grade claims).
+
+---
 
 ## DoD (Reliability Phase)
 
@@ -21,7 +24,39 @@ And the generated Markdown report must contain:
 * Values are either numeric or column-policy `"N/A"`
 * Provenance is recorded in artifacts and report
 
-> Note: In this phase, metrics are **sanity-tier** to validate the plumbing (not intended for paper results).
+> Note: In this phase, metrics are **sanity-tier** to validate the plumbing
+> (they are **not** intended for paper-level claims).
+
+---
+
+## Level-C Research Phase (Started)
+
+The DoD phase is **frozen** and preserved on the `main` branch and the `v0.1.0-dod` tag.
+
+All research-oriented implementations are conducted **exclusively** on the `level-c-research` branch.
+
+### Fixed Datasets
+
+Level-C research uses the following datasets **exclusively**:
+
+* **Preference learning**: HH-RLHF
+* **Stress / safety evaluation**: HarmBench
+
+No additional datasets are introduced in this phase.
+
+### HarmBench Usage Policy
+
+HarmBench is used **strictly for evaluation** and **never for training**.
+
+Reports contain **only aggregated metrics**. Raw prompts or generated harmful content are **never** included in artifacts or Markdown reports.
+
+### Separation from DoD Phase
+
+Artifacts schema, evaluation logic, validation rules, and reporting pipelines defined in the DoD phase are **reused as-is**.
+
+Any extension in the research phase must preserve DoD guarantees (no empty cells, column N/A policy, provenance tracking).
+
+---
 
 ## Quickstart
 
@@ -63,6 +98,8 @@ Outputs:
 
 * `reports/report.md`
 
+---
+
 ## Backends
 
 ### `fallback` (default for DoD)
@@ -71,10 +108,12 @@ Outputs:
 * small deterministic tokenizer + GRU tiny LM
 * designed to run on CPU and in CI without `transformers`
 
-### `hf` (future / optional)
+### `hf` (research phase)
 
 * Hugging Face backend (optional dependency)
-* used in the research-grade phase (not part of DoD right now)
+* used **only** in the Level-C research phase
+
+---
 
 ## Project Structure (high level)
 
@@ -85,6 +124,8 @@ Outputs:
 * `rlhf_eval_lab/reporting/` : artifacts, aggregation, markdown report generation
 * `tests/integration/` : end-to-end regression tests (DoD gate)
 * `test_data/` : minimal sample JSONL (seed for future dataset wiring)
+
+---
 
 ## Development
 
@@ -99,6 +140,8 @@ pytest -q
 ```bash
 rm -rf artifacts reports
 ```
+
+---
 
 ## License
 
