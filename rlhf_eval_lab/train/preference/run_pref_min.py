@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import hashlib
 import json
 import os
 import random
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import torch
 
@@ -21,6 +20,7 @@ except Exception as e:  # pragma: no cover
 
 from .batch import load_prompts_jsonl, load_prefs_jsonl, make_pref_pairs, make_batch
 from .logprob import debug_check_masks
+from .trainers.base import clip_gradients_, global_grad_norm_l2
 from .trainers.dpo import DPOTrainer
 from .trainers.ipo import IPOTrainer
 
@@ -57,8 +57,30 @@ def main() -> None:
     p.add_argument("--allow_short_completion", action="store_true", default=True)
     p.add_argument("--no_allow_short_completion", dest="allow_short_completion", action="store_false")
 
+    # -------------------------
+    # Gradient clipping (stability backbone)
+    # -------------------------
+    p.add_argument("--max_grad_norm", type=float, default=1.0)
+    p.add_argument("--no_grad_clip", dest="grad_clip", action="store_false")
+    p.set_defaults(grad_clip=True)
+
     p.add_argument("--out", type=str, required=True)
     args = p.parse_args()
+
+    if args.beta <= 0:
+        raise ValueError("beta must be > 0")
+    if args.lr <= 0:
+        raise ValueError("lr must be > 0")
+    if args.max_steps <= 0:
+        raise ValueError("max_steps must be > 0")
+    if args.batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if args.max_length <= 0:
+        raise ValueError("max_length must be > 0")
+    if args.min_comp_tokens < 0:
+        raise ValueError("min_comp_tokens must be >= 0")
+    if args.grad_clip and args.max_grad_norm <= 0:
+        raise ValueError("max_grad_norm must be > 0 when grad_clip is enabled")
 
     _set_seed(args.seed)
     device = "cpu"
@@ -119,20 +141,33 @@ def main() -> None:
         out = trainer.compute_loss(model=model, ref_model=ref_model, batch=batch)
         out.loss.backward()
 
-        # simple grad sanity
+        # -----------------------------------------
+        # Gradient clipping (global norm) + metrics
+        # -----------------------------------------
+        clip_m = clip_gradients_(
+            model=model,
+            max_grad_norm=float(args.max_grad_norm),
+            enabled=bool(args.grad_clip),
+            log=True,
+        )
+
+        # Debug probe for step==0 (now consistent with global norm)
         if step == 0:
-            total_norm = 0.0
-            for p_ in model.parameters():
-                if p_.grad is not None:
-                    total_norm += float(p_.grad.detach().data.norm(2).cpu().item())
-            print(f"[debug:grad] grad_norm_l2_sum={total_norm:.6f}")
+            gn = global_grad_norm_l2(model.parameters())
+            print(f"[debug:grad] global_grad_norm_l2={gn:.6f}")
 
         opt.step()
 
+        # Merge metrics: trainer metrics + clip metrics
         last_metrics = dict(out.metrics)
-        if step % 1 == 0:
-            msg = " ".join([f"{k}={v:.6f}" if isinstance(v, float) else f"{k}={v}" for k, v in last_metrics.items()])
-            print(f"[train] step={step} {msg}")
+        last_metrics["loss"] = float(out.loss.detach().cpu().item())
+        last_metrics["grad_norm_pre"] = float(clip_m.grad_norm_pre)
+        last_metrics["grad_norm_post"] = float(clip_m.grad_norm_post)
+        # metrics is Dict[str,float], store as 0.0/1.0
+        last_metrics["did_clip"] = 1.0 if clip_m.did_clip else 0.0
+
+        msg = " ".join([f"{k}={v:.6f}" for k, v in last_metrics.items()])
+        print(f"[train] step={step} {msg}")
 
         step += 1
 
@@ -152,6 +187,8 @@ def main() -> None:
             "max_length": args.max_length,
             "min_comp_tokens": args.min_comp_tokens,
             "allow_short_completion": args.allow_short_completion,
+            "grad_clip": bool(args.grad_clip),
+            "max_grad_norm": float(args.max_grad_norm),
         },
         "metrics": last_metrics,
         "config_hash": _sha256_of_dict(
@@ -166,6 +203,8 @@ def main() -> None:
                 "max_length": args.max_length,
                 "min_comp_tokens": args.min_comp_tokens,
                 "allow_short_completion": args.allow_short_completion,
+                "grad_clip": bool(args.grad_clip),
+                "max_grad_norm": float(args.max_grad_norm),
             }
         ),
     }
