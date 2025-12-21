@@ -23,6 +23,7 @@ from .logprob import debug_check_masks
 from .trainers.base import clip_gradients_, global_grad_norm_l2
 from .trainers.dpo import DPOTrainer
 from .trainers.ipo import IPOTrainer
+from .trainers.rrhf import RRHFTrainer
 
 
 def _sha256_of_dict(d: Dict[str, Any]) -> str:
@@ -40,7 +41,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--prefs", type=str, required=True)
     p.add_argument("--prompts", type=str, required=True)
-    p.add_argument("--method", type=str, choices=["dpo", "ipo"], required=True)
+    p.add_argument("--method", type=str, choices=["dpo", "ipo", "rrhf"], required=True)
 
     p.add_argument("--model", type=str, default="gpt2")
     p.add_argument("--seed", type=int, default=0)
@@ -103,8 +104,10 @@ def main() -> None:
 
     if args.method == "dpo":
         trainer = DPOTrainer(beta=args.beta)
-    else:
+    elif args.method == "ipo":
         trainer = IPOTrainer(beta=args.beta)
+    else:
+    	trainer = RRHFTrainer(beta=args.beta)
 
     prompts = load_prompts_jsonl(args.prompts)
     prefs_rows = load_prefs_jsonl(args.prefs)
