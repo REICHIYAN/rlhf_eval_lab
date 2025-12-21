@@ -35,7 +35,36 @@ The DoD phase is **frozen** and preserved on the `main` branch and the `v0.1.0-d
 
 All research-oriented implementations are conducted **exclusively** on the `level-c-research` branch.
 
-### Fixed Datasets
+---
+
+## Installation
+
+### Layer 1 — DoD / OSS Reliability (default)
+
+* CPU / CI safe
+* **No `transformers` dependency**
+* Uses the torch-only `fallback` backend
+
+```bash
+pip install -e .
+```
+
+### Layer 2 — Level-C Research (HF backend)
+
+* Requires Hugging Face dependencies (`transformers`)
+* Used **only** on the `level-c-research` branch or with `--backend hf`
+
+```bash
+pip install -r requirements-hf.txt
+pip install -e .
+```
+
+> The dependency boundary is intentional:
+> **DoD reliability must remain independent of `transformers`.**
+
+---
+
+## Fixed Datasets (Level-C)
 
 Level-C research uses the following datasets **exclusively**:
 
@@ -44,29 +73,32 @@ Level-C research uses the following datasets **exclusively**:
 
 No additional datasets are introduced in this phase.
 
-### HarmBench Usage Policy
+---
+
+## HarmBench Usage Policy
 
 HarmBench is used **strictly for evaluation** and **never for training**.
 
-Reports contain **only aggregated metrics**. Raw prompts or generated harmful content are **never** included in artifacts or Markdown reports.
-
-### Separation from DoD Phase
-
-Artifacts schema, evaluation logic, validation rules, and reporting pipelines defined in the DoD phase are **reused as-is**.
-
-Any extension in the research phase must preserve DoD guarantees (no empty cells, column N/A policy, provenance tracking).
+Reports contain **only aggregated metrics**.
+Raw prompts or generated harmful content are **never** included in artifacts or Markdown reports.
 
 ---
 
-## Quickstart
+## Separation from DoD Phase
 
-### 1) Install (editable)
+Artifacts schema, evaluation logic, validation rules, and reporting pipelines defined in the DoD phase are **reused as-is**.
 
-```bash
-pip install -e .
-```
+Any extension in the research phase must preserve DoD guarantees:
 
-### 2) Run (fallback backend, torch-only)
+* no empty cells
+* column-level `"N/A"` policy
+* provenance tracking
+
+---
+
+## Quickstart (DoD)
+
+### 1) Run (fallback backend, torch-only)
 
 ```bash
 rlhf-lab run --backend fallback --seed 0
@@ -76,7 +108,7 @@ Outputs:
 
 * `artifacts/<method_key>/seed_<seed>.json`
 
-### 3) Validate (OSS gate)
+### 2) Validate (OSS gate)
 
 ```bash
 rlhf-lab validate
@@ -88,7 +120,7 @@ Validation guarantees:
 * No empty cells downstream
 * `"N/A"` only where allowed by column policy
 
-### 4) Report (Markdown tables)
+### 3) Report (Markdown tables)
 
 ```bash
 rlhf-lab report
@@ -102,15 +134,16 @@ Outputs:
 
 ## Backends
 
-### `fallback` (default for DoD)
+### `fallback` (default, DoD)
 
 * `torch` only
 * small deterministic tokenizer + GRU tiny LM
-* designed to run on CPU and in CI without `transformers`
+* designed to run on CPU and in CI **without `transformers`**
 
 ### `hf` (research phase)
 
-* Hugging Face backend (optional dependency)
+* Hugging Face backend
+* optional dependency via `requirements-hf.txt`
 * used **only** in the Level-C research phase
 
 ---

@@ -1,1 +1,5 @@
-transformers
+# requirements-hf.txt
+transformers>=4.40
+accelerate>=0.30
+sentencepiece
+
