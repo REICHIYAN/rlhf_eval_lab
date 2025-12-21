@@ -24,6 +24,7 @@ from .trainers.base import clip_gradients_, global_grad_norm_l2
 from .trainers.dpo import DPOTrainer
 from .trainers.ipo import IPOTrainer
 from .trainers.rrhf import RRHFTrainer
+from .trainers.orpo import ORPOTrainer
 
 
 def _sha256_of_dict(d: Dict[str, Any]) -> str:
@@ -41,7 +42,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--prefs", type=str, required=True)
     p.add_argument("--prompts", type=str, required=True)
-    p.add_argument("--method", type=str, choices=["dpo", "ipo", "rrhf"], required=True)
+    p.add_argument("--method", type=str, choices=["dpo", "ipo", "rrhf", "orpo"], required=True)
 
     p.add_argument("--model", type=str, default="gpt2")
     p.add_argument("--seed", type=int, default=0)
@@ -51,6 +52,7 @@ def main() -> None:
     p.add_argument("--max_steps", type=int, default=20)
     p.add_argument("--batch_size", type=int, default=2)
     p.add_argument("--beta", type=float, default=0.1)
+    p.add_argument("--orpo_alpha", type=float, default=0.1)
     p.add_argument("--lr", type=float, default=1e-4)
 
     p.add_argument("--max_length", type=int, default=256)
@@ -82,7 +84,11 @@ def main() -> None:
         raise ValueError("min_comp_tokens must be >= 0")
     if args.grad_clip and args.max_grad_norm <= 0:
         raise ValueError("max_grad_norm must be > 0 when grad_clip is enabled")
-
+        
+    # ORPO alpha sanity (harmless for other methods)
+    if args.orpo_alpha < 0:
+        raise ValueError("orpo_alpha must be >= 0")
+        
     _set_seed(args.seed)
     device = "cpu"
 
@@ -106,8 +112,10 @@ def main() -> None:
         trainer = DPOTrainer(beta=args.beta)
     elif args.method == "ipo":
         trainer = IPOTrainer(beta=args.beta)
+    elif args.method == "rrhf":
+        trainer = RRHFTrainer(beta=args.beta)
     else:
-    	trainer = RRHFTrainer(beta=args.beta)
+        trainer = ORPOTrainer(beta=args.beta, alpha=args.orpo_alpha)
 
     prompts = load_prompts_jsonl(args.prompts)
     prefs_rows = load_prefs_jsonl(args.prefs)
@@ -176,7 +184,7 @@ def main() -> None:
 
     if step == 0:
         raise RuntimeError("Training loop did not run any steps. Check batch construction constraints.")
-
+    
     payload: Dict[str, Any] = {
         "provenance": {
             "method": args.method,
@@ -192,6 +200,8 @@ def main() -> None:
             "allow_short_completion": args.allow_short_completion,
             "grad_clip": bool(args.grad_clip),
             "max_grad_norm": float(args.max_grad_norm),
+            # ORPO param (safe to include always)
+            "orpo_alpha": float(args.orpo_alpha),
         },
         "metrics": last_metrics,
         "config_hash": _sha256_of_dict(
@@ -208,6 +218,8 @@ def main() -> None:
                 "allow_short_completion": args.allow_short_completion,
                 "grad_clip": bool(args.grad_clip),
                 "max_grad_norm": float(args.max_grad_norm),
+                # ORPO param (safe to include always)
+                "orpo_alpha": float(args.orpo_alpha),
             }
         ),
     }
