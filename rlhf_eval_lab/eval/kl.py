@@ -10,11 +10,22 @@ from typing import Any, Dict
 import math
 
 
+def _safe_float(x: Any) -> float | None:
+    try:
+        v = float(x)
+    except Exception:
+        return None
+    if math.isnan(v) or math.isinf(v):
+        return None
+    return v
+
+
 def compute_kl(extra: Dict[str, Any]) -> float:
     """
     Sanity tier KL:
-    - extra["kl_values"] があれば平均
+    - extra["kl_values"] があれば平均（NaN/inf は除外）
     - extra["kl"] があれば abs(kl)
+    - 後方互換：extra["kl_mean"] も拾う
     - なければ NaN
     """
     if not isinstance(extra, dict):
@@ -24,21 +35,23 @@ def compute_kl(extra: Dict[str, Any]) -> float:
     if isinstance(kv, list) and len(kv) > 0:
         vals = []
         for x in kv:
-            try:
-                v = float(x)
-                if not math.isnan(v) and not math.isinf(v):
-                    vals.append(v)
-            except Exception:
-                continue
+            v = _safe_float(x)
+            if v is not None:
+                vals.append(v)
         if vals:
             return float(sum(vals)) / float(len(vals))
         return float("nan")
 
+    # SSOT: "kl"
     kl = extra.get("kl")
-    if isinstance(kl, (int, float)):
-        v = float(kl)
-        if math.isnan(v) or math.isinf(v):
-            return float("nan")
+    v = _safe_float(kl)
+    if v is not None:
         return float(abs(v))
+
+    # Backward compatibility: "kl_mean"
+    klm = extra.get("kl_mean")
+    v2 = _safe_float(klm)
+    if v2 is not None:
+        return float(abs(v2))
 
     return float("nan")

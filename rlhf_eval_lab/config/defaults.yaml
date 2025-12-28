@@ -12,6 +12,7 @@ tiny_lm:
 train:
   lr: 0.001
   grad_clip: 1.0
+  sanity_adv_scale: 10.0
 
 eval:
   max_new_tokens: 16

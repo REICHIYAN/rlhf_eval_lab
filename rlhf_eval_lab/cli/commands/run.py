@@ -21,6 +21,15 @@ from rlhf_eval_lab.backends.fallback.backend import FallbackBackend
 from rlhf_eval_lab.train.reward_models.heuristic import HeuristicRewardModel
 
 
+_PPO_METHOD_KEYS = {
+    "ppo_standard",
+    "kl_ppo_fixed",
+    "kl_ppo_adaptive",
+    "safe_ppo",
+    "adaptive_rm_ppo",
+}
+
+
 def _ensure_dir(p: str) -> None:
     os.makedirs(p, exist_ok=True)
 
@@ -37,36 +46,26 @@ def _truncate_text(s: str) -> str:
     return " ".join(toks[: max(2, len(toks) // 2)])
 
 
-def _make_pref_pair(
-    prompt: str,
-    completion: str,
-    reward: float,
-) -> Tuple[str, str]:
+def _make_pref_pair(prompt: str, completion: str, reward: float) -> Tuple[str, str]:
     """
     決定論的に (chosen, rejected) を作る。
     - completion をベースに「短縮版」を作り、heuristic reward の大小で chosen を決める。
     """
     alt = _truncate_text(completion)
-    # alt が同一になった場合は、確実に違う文字列にする（決定論的）
     if alt.strip() == (completion or "").strip():
         alt = (completion or "") + " ."
-
     return (completion, alt) if reward >= 0.0 else (alt, completion)
 
 
 def run_cmd(args) -> int:
     cfg = load_config(preset=args.preset, user_path=args.config)
     seed = int(args.seed)
-    _set_seed(seed)
 
     out_dir = os.path.abspath(args.out)
     _ensure_dir(out_dir)
 
-    # backend: fallback only（CLI arg は将来 hf を足す）
-    backend = FallbackBackend(cfg)
     rm = HeuristicRewardModel()
 
-    # 最小プロンプト（fallback sanity）
     prompts: List[str] = [
         "Explain what reinforcement learning is.",
         "What is PPO in simple terms?",
@@ -74,50 +73,126 @@ def run_cmd(args) -> int:
     ]
 
     max_new = int(cfg.get("eval", {}).get("max_new_tokens", 16))
-    kl_beta = float(cfg.get("train", {}).get("kl_beta", 0.1))
+    kl_beta_base = float(cfg.get("train", {}).get("kl_beta", 0.1))
     pref_beta = float(cfg.get("train", {}).get("pref_beta", 0.1))
 
+    # sanity tier: 手法差分を観測できるようにする
+    kl_beta_map: Dict[str, float] = {
+        "ppo_standard": 0.0,
+        "kl_ppo_fixed": kl_beta_base,
+        "kl_ppo_adaptive": kl_beta_base * 2.0,
+        "safe_ppo": kl_beta_base * 5.0,
+        "adaptive_rm_ppo": kl_beta_base * 1.0,
+    }
+
+    ppo_steps = int(cfg.get("train", {}).get("sanity_ppo_steps", 20))
+    if ppo_steps < 2:
+        ppo_steps = 2
+
+    # ==========================================================
+    # ★公平性のSSOT：PPO-family の ref/policy/data を固定
+    #
+    # - ref_state: KL の参照分布（分母）を固定
+    # - policy_init: 全手法の初期政策を固定
+    # - prompts/completions/rewards: 学習入力を固定
+    #
+    # run.py は ref_model を直接触らない（ppo_step(ref_state=...) が唯一の入口）
+    # ==========================================================
+    _set_seed(seed)
+    base = FallbackBackend(cfg)
+
+    ppo_ref_state = {k: v.detach().clone() for k, v in base.ref_model.state_dict().items()}
+    ppo_policy_init_state = {k: v.detach().clone() for k, v in base.model.state_dict().items()}
+
+    ppo_prompts = list(prompts)
+    ppo_base_completions = base.generate(ppo_prompts, max_new_tokens=max_new)
+    ppo_base_rewards = rm.score(ppo_prompts, ppo_base_completions)
+
     for m in METHOD_SPECS:
+        _set_seed(seed)
+        backend = FallbackBackend(cfg)
+
         method_dir = os.path.join(out_dir, m.key)
         _ensure_dir(method_dir)
-
-        completions = backend.generate(prompts, max_new_tokens=max_new)
-        rewards = rm.score(prompts, completions)
 
         extra: Dict[str, Any] = {}
         dataset_key = "prompts"
 
-        # ---- 1 step 学習（手法別：sanity tier）----
         if m.key == "sft":
-            # SFT は prompt+completion を “テキスト列” として 1 step
+            # SFT は固定データで回す（DoD: 再現性優先）
+            completions = list(ppo_base_completions)
+            rewards = rm.score(prompts, completions)
+
             texts = [f"{p} {c}".strip() for p, c in zip(prompts, completions)]
             loss = backend.sft_step(texts)
+
             extra["sft_loss"] = float(loss)
+            extra["kl"] = 0.0
             extra["steps"] = 1
             dataset_key = "sft_train"
 
-        elif m.is_ppo_family:
-            out = backend.ppo_step(
-                prompts=prompts,
-                completions=completions,
-                rewards=rewards,
-                kl_beta=kl_beta,
-            )
-            extra.update({k: float(v) for k, v in out.items()})
-            extra["steps"] = 1
+        elif m.key in _PPO_METHOD_KEYS:
+            # PPO-family: policy 初期値を固定
+            backend.model.load_state_dict(ppo_policy_init_state)
+
+            completions = list(ppo_base_completions)
+            rewards = list(ppo_base_rewards)
+
+            kl_beta_eff = float(kl_beta_map.get(m.key, kl_beta_base))
+
+            last_out: Dict[str, float] = {}
+            for _ in range(ppo_steps):
+                out = backend.ppo_step(
+                    prompts=ppo_prompts,
+                    completions=completions,
+                    rewards=rewards,
+                    kl_beta=kl_beta_eff,
+                    ref_state=ppo_ref_state,
+                    update_ref=False,
+                )
+                last_out = {k: float(v) for k, v in out.items()}
+
+            extra.update(last_out)
+
+            # SSOT: tables は kl_sum（>=0）を使う
+            if "kl_sum" in extra:
+                extra["kl"] = float(extra["kl_sum"])
+            elif "kl" in extra:
+                extra["kl"] = float(extra["kl"])
+            elif "kl_mean" in extra:
+                extra["kl"] = float(extra["kl_mean"])
+            else:
+                # 空欄ゼロ（最後の保険）
+                extra["kl"] = 0.0
+
+            extra["steps"] = int(ppo_steps)
+            extra["kl_beta"] = float(kl_beta_eff)
             dataset_key = "prompts"
 
+            print(
+                f"[run] method={m.key} kl_beta={kl_beta_eff} steps={ppo_steps} "
+                f"ppo_out_keys={sorted(list(last_out.keys()))} "
+                f"kl_sum={extra.get('kl_sum')} kl_mean={extra.get('kl_mean')} "
+                f"loss_reward={extra.get('loss_reward')} loss_kl={extra.get('loss_kl')} "
+                f"param_delta_l2={extra.get('param_delta_l2')} grad_l2={extra.get('grad_l2')} "
+                f"token_count={extra.get('token_count')}"
+            )
+
         else:
-            # Preference / Active は、最小の 1 pair で 1 step
+            # non-PPO: 手法ごとに生成してOK（比較軸がKLではない）
+            completions = backend.generate(prompts, max_new_tokens=max_new)
+            rewards = rm.score(prompts, completions)
+
             dataset_key = "pref_train" if m.is_preference_based else "comparisons"
-            # 先頭データで確実に1回は backward->step を回す
             chosen, rejected = _make_pref_pair(prompts[0], completions[0], rewards[0])
+
             loss = backend.preference_step(
                 prompt=prompts[0],
                 chosen=chosen,
                 rejected=rejected,
                 beta=pref_beta,
             )
+
             extra["pref_loss"] = float(loss)
             extra["steps"] = 1
             extra["pair_prompt"] = prompts[0]
