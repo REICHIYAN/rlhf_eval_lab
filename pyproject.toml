@@ -27,3 +27,8 @@ packages = ["rlhf_eval_lab"]
 
 [tool.setuptools.package-data]
 rlhf_eval_lab = ["config/*.yaml", "config/presets/*.yaml"]
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: integration tests (may be slower, may require extra deps)",
+]
