@@ -16,6 +16,8 @@ from rlhf_eval_lab.registry.methods import METHOD_KEYS, METHOD_BY_KEY
 from rlhf_eval_lab.registry.metrics import METRIC_SPECS, METRIC_BY_KEY
 from rlhf_eval_lab.reporting.artifacts import read_artifacts, ArtifactsV1
 from rlhf_eval_lab.eval.runner import evaluate_artifacts
+from rlhf_eval_lab.reporting.paths import report_md_path
+from rlhf_eval_lab.reporting.validate_report_md import validate_report_md_or_raise
 
 
 def _na() -> str:
@@ -143,5 +145,18 @@ def validate_cmd(args) -> int:
             # SSOT = evaluate_artifacts が返す全metricが正
             metrics = evaluate_artifacts(art)
             _validate_metrics(method_key, metrics)
+
+    # Optional: validate rendered report.md (DoD invariants).
+    report_md: str | None = getattr(args, "report_md", None)
+    report_dir: str | None = getattr(args, "report_dir", None)
+    if report_md or report_dir:
+        if not report_md:
+            report_md = report_md_path(os.path.abspath(report_dir))
+        report_md = os.path.abspath(report_md)
+        if not os.path.exists(report_md):
+            raise FileNotFoundError(f"report.md not found: {report_md}")
+        with open(report_md, "r", encoding="utf-8") as f:
+            md = f.read()
+        validate_report_md_or_raise(md)
 
     return 0

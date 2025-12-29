@@ -49,7 +49,6 @@ def _truncate_text(s: str) -> str:
 def _make_pref_pair(prompt: str, completion: str, reward: float) -> Tuple[str, str]:
     """
     決定論的に (chosen, rejected) を作る。
-    - completion をベースに「短縮版」を作り、heuristic reward の大小で chosen を決める。
     """
     alt = _truncate_text(completion)
     if alt.strip() == (completion or "").strip():
@@ -76,7 +75,6 @@ def run_cmd(args) -> int:
     kl_beta_base = float(cfg.get("train", {}).get("kl_beta", 0.1))
     pref_beta = float(cfg.get("train", {}).get("pref_beta", 0.1))
 
-    # sanity tier: 手法差分を観測できるようにする
     kl_beta_map: Dict[str, float] = {
         "ppo_standard": 0.0,
         "kl_ppo_fixed": kl_beta_base,
@@ -90,13 +88,7 @@ def run_cmd(args) -> int:
         ppo_steps = 2
 
     # ==========================================================
-    # ★公平性のSSOT：PPO-family の ref/policy/data を固定
-    #
-    # - ref_state: KL の参照分布（分母）を固定
-    # - policy_init: 全手法の初期政策を固定
-    # - prompts/completions/rewards: 学習入力を固定
-    #
-    # run.py は ref_model を直接触らない（ppo_step(ref_state=...) が唯一の入口）
+    # ★ Run-level SSOT（ここが今回の本質）
     # ==========================================================
     _set_seed(seed)
     base = FallbackBackend(cfg)
@@ -108,6 +100,18 @@ def run_cmd(args) -> int:
     ppo_base_completions = base.generate(ppo_prompts, max_new_tokens=max_new)
     ppo_base_rewards = rm.score(ppo_prompts, ppo_base_completions)
 
+    # ★ provenance は run 開始時に一度だけ確定（SSOT）
+    run_provenance = build_provenance(
+        cfg,
+        backend="fallback",
+        model_id="tiny-gru",
+        tokenizer="simple",
+        seed=seed,
+    )
+
+    # ==========================================================
+    # method loop
+    # ==========================================================
     for m in METHOD_SPECS:
         _set_seed(seed)
         backend = FallbackBackend(cfg)
@@ -119,7 +123,6 @@ def run_cmd(args) -> int:
         dataset_key = "prompts"
 
         if m.key == "sft":
-            # SFT は固定データで回す（DoD: 再現性優先）
             completions = list(ppo_base_completions)
             rewards = rm.score(prompts, completions)
 
@@ -132,7 +135,6 @@ def run_cmd(args) -> int:
             dataset_key = "sft_train"
 
         elif m.key in _PPO_METHOD_KEYS:
-            # PPO-family: policy 初期値を固定
             backend.model.load_state_dict(ppo_policy_init_state)
 
             completions = list(ppo_base_completions)
@@ -154,32 +156,22 @@ def run_cmd(args) -> int:
 
             extra.update(last_out)
 
-            # SSOT: tables は kl_sum（>=0）を使う
             if "kl_sum" in extra:
                 extra["kl"] = float(extra["kl_sum"])
-            elif "kl" in extra:
-                extra["kl"] = float(extra["kl"])
             elif "kl_mean" in extra:
                 extra["kl"] = float(extra["kl_mean"])
             else:
-                # 空欄ゼロ（最後の保険）
                 extra["kl"] = 0.0
 
             extra["steps"] = int(ppo_steps)
             extra["kl_beta"] = float(kl_beta_eff)
-            dataset_key = "prompts"
 
             print(
                 f"[run] method={m.key} kl_beta={kl_beta_eff} steps={ppo_steps} "
-                f"ppo_out_keys={sorted(list(last_out.keys()))} "
-                f"kl_sum={extra.get('kl_sum')} kl_mean={extra.get('kl_mean')} "
-                f"loss_reward={extra.get('loss_reward')} loss_kl={extra.get('loss_kl')} "
-                f"param_delta_l2={extra.get('param_delta_l2')} grad_l2={extra.get('grad_l2')} "
-                f"token_count={extra.get('token_count')}"
+                f"ppo_out_keys={sorted(list(last_out.keys()))}"
             )
 
         else:
-            # non-PPO: 手法ごとに生成してOK（比較軸がKLではない）
             completions = backend.generate(prompts, max_new_tokens=max_new)
             rewards = rm.score(prompts, completions)
 
@@ -199,18 +191,11 @@ def run_cmd(args) -> int:
             extra["pair_chosen"] = chosen
             extra["pair_rejected"] = rejected
 
-        prov = build_provenance(
-            cfg,
-            backend="fallback",
-            model_id="tiny-gru",
-            tokenizer="simple",
-            seed=seed,
-        )
-
+        # ★ provenance は必ず run_provenance を使う
         art = ArtifactsV1(
             method_key=m.key,
             dataset_key=dataset_key,
-            provenance=prov,
+            provenance=run_provenance,
             prompts=prompts,
             completions=completions,
             rewards=rewards,
