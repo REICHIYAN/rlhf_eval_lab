@@ -4,6 +4,7 @@
 # - provenance（backend/model/tokenizer/config_hash/git_commit/seed）を report に刻む
 # 注意：
 # - fallback sanity tier を最優先（見た目より “壊れない”）
+
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -35,7 +36,6 @@ def _fmt_float(x: object, nd: int = 4) -> str:
         if x is None:
             return "N/A"
 
-        # string normalizer
         if isinstance(x, str):
             s = x.strip()
             if s == "":
@@ -47,7 +47,6 @@ def _fmt_float(x: object, nd: int = 4) -> str:
         v = float(x)  # type: ignore[arg-type]
 
         # NaN / inf guard
-        # (NaN is the only float where v != v is True)
         if v != v:
             return "N/A"
         if v == float("inf") or v == float("-inf"):
@@ -90,31 +89,52 @@ def _collect_provenance(arts: Sequence[ArtifactsV1]) -> List[Dict[str, str]]:
     return rows
 
 
-def _provenance_summary(prows: Sequence[Dict[str, str]]) -> Dict[str, str]:
+def _provenance_summary_strict(prows: Sequence[Dict[str, str]]) -> Dict[str, str]:
+    """
+    Strict provenance summarizer.
+
+    Policy:
+      - Each field must be either:
+          (a) exactly 1 unique non-N/A value across all methods, OR
+          (b) all N/A (unknown everywhere).
+      - Any mixing (including some N/A + some non-N/A) is a hard error.
+        Rationale: report must be self-auditable; partial provenance is not allowed.
+    """
     keys = ["backend", "model_id", "tokenizer", "config_hash", "git_commit", "seed"]
-
-    def uniq(k: str) -> List[str]:
-        vs: List[str] = []
-        for r in prows:
-            v = _as_str(r.get(k, "N/A"))
-            if v not in vs:
-                vs.append(v)
-        return vs
-
     out: Dict[str, str] = {}
+
     for k in keys:
-        u = uniq(k)
-        if len(u) == 1:
-            out[k] = u[0]
-        else:
-            u_non = [x for x in u if x != "N/A"]
-            out[k] = "N/A" if len(u_non) == 0 else "MIXED"
+        vals = [_as_str(r.get(k, "N/A")) for r in prows]
+        uniq_all: List[str] = []
+        for v in vals:
+            if v not in uniq_all:
+                uniq_all.append(v)
+
+        uniq_non = [v for v in uniq_all if v != "N/A"]
+
+        if len(uniq_non) == 0:
+            # all N/A
+            out[k] = "N/A"
+            continue
+
+        if len(uniq_non) == 1 and len(uniq_all) == 1:
+            # single value, no N/A
+            out[k] = uniq_non[0]
+            continue
+
+        # Mixed conditions OR partial provenance -> hard fail
+        raise ValueError(
+            "Provenance is inconsistent across methods. "
+            f"field={k} unique_values={uniq_all}. "
+            "This indicates run/aggregate/report conditions are not fixed."
+        )
+
     return out
 
 
 def _render_provenance_section(arts: Sequence[ArtifactsV1]) -> str:
     prows = _collect_provenance(arts)
-    summ = _provenance_summary(prows)
+    summ = _provenance_summary_strict(prows)
 
     summary_rows = [
         ["backend", _as_str(summ.get("backend"))],
@@ -149,7 +169,7 @@ def _render_provenance_section(arts: Sequence[ArtifactsV1]) -> str:
     parts.append("## 🧾 Provenance")
     parts.append("")
     parts.append("- 目的：report 単体で再現性（backend/model/tokenizer/config/git/seed）を監査できるようにする")
-    parts.append("- `MIXED` が出たら、run/aggregate/report のどこかで条件が揺れています")
+    parts.append("- ここが揺れる場合は report 生成時点で例外になります（条件固定の破綻を許容しない）")
     parts.append("")
     parts.append("### Summary")
     parts.append(summary_md)
@@ -160,7 +180,6 @@ def _render_provenance_section(arts: Sequence[ArtifactsV1]) -> str:
 
 
 def _method_label(method_key: str, metrics: Dict[str, Any]) -> str:
-    # method_name が無い/壊れてる時でも method_key で必ず埋める
     label = _as_str(metrics.get("method_name"))
     if label == "N/A":
         return _as_str(method_key)
@@ -168,7 +187,6 @@ def _method_label(method_key: str, metrics: Dict[str, Any]) -> str:
 
 
 def _stable_items(aggregated: Dict[str, Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
-    # 出力の安定性（壊れない）を優先し、method_key でソートして固定
     return sorted(aggregated.items(), key=lambda kv: kv[0])
 
 
@@ -270,7 +288,6 @@ def render_report_markdown(
 
 
 # ===== Backward-compatible alias =====
-# 古い呼び出し側が `render_report` を import しても壊れないように残す
 def render_report(
     aggregated: Dict[str, Dict[str, Any]],
     artifacts: Sequence[ArtifactsV1],
