@@ -1,5 +1,6 @@
+# rlhf_eval_lab/train/preference/run_pref_min.py
 # =============================================================================
-# RLAIF-min (Heuristic AI-feedback pseudo-labeling)
+# Preference-min runner (DPO/IPO/RRHF/ORPO/RLAIF-min)
 #
 # IMPORTANT (DoD / Provenance design):
 #   - `config_hash` MUST represent *run-level invariants only*.
@@ -10,7 +11,7 @@
 #
 # This guarantees:
 #   - report.md is self-auditable
-#   - fallback / CI / E2E never produces MIXED provenance
+#   - E2E never produces MIXED provenance
 # =============================================================================
 
 from __future__ import annotations
@@ -35,20 +36,19 @@ except Exception as e:  # pragma: no cover
     ) from e
 
 from .batch import load_prefs_jsonl, load_prompts_jsonl, make_batch, make_pref_pairs
-from .logprob import debug_check_masks
-from .trainers.base import clip_gradients_, global_grad_norm_l2
 from .trainers.dpo import DPOTrainer
 from .trainers.ipo import IPOTrainer
 from .trainers.orpo import ORPOTrainer
+from .trainers.rlaif import RLAIFTrainer
 from .trainers.rrhf import RRHFTrainer
 
 
 # -----------------------------------------------------------------------------
-# Heuristic RM (deterministic fallback, dependency-free)
+# Heuristic RM (deterministic, dependency-free)
 # -----------------------------------------------------------------------------
 class HeuristicRewardModel:
     """
-    Deterministic heuristic reward model (fallback).
+    Deterministic heuristic reward model.
 
     Purpose:
       - Provide reproducible AI-style preference signals (RLAIF-min)
@@ -132,7 +132,7 @@ def _run_config_hash(args: argparse.Namespace) -> str:
 
 
 # -----------------------------------------------------------------------------
-# RLAIF helpers
+# RLAIF helpers (pseudo-labeling)
 # -----------------------------------------------------------------------------
 def _rlaif_score_pair(rm: HeuristicRewardModel, prompt: str, a: str, b: str) -> Tuple[float, float]:
     s = rm.score([prompt, prompt], [a, b])
@@ -202,7 +202,7 @@ def main() -> None:
         "ipo": IPOTrainer,
         "rrhf": RRHFTrainer,
         "orpo": lambda **kw: ORPOTrainer(alpha=args.orpo_alpha, **kw),
-        "rlaif": RRHFTrainer,
+        "rlaif": RLAIFTrainer,
     }[args.method](beta=args.beta)
 
     prompts = load_prompts_jsonl(args.prompts)
