@@ -84,6 +84,8 @@ TABLE1_METRICS: List[MetricSpec] = [
     MetricSpec(key="onsupport", name="On-support ↑", direction="↑", in_table1=True),
     MetricSpec(key="judge", name="Judge ↑", direction="↑", in_table1=True),
     MetricSpec(key="win_rate", name="Win-rate ↑", direction="↑", in_table1=True),
+    # PPL は B-1 で追加（まずは N/A を許さず必ず数値）
+    MetricSpec(key="ppl", name="PPL ↓", direction="↓", in_table1=True),
     # KL は preference 系 / active 系では列規約で N/A を許可（runnerがN/Aを返す設計）
     MetricSpec(
         key="kl",
