@@ -1,9 +1,9 @@
 # rlhf_eval_lab/reporting/markdown.py
-# 目的：
-# - Table 1 / 2A / 2B / 2C を必ず出す（全セル埋め / N/A規約）
-# - provenance（backend/model/tokenizer/config_hash/git_commit/seed）を report に刻む
-# 注意：
-# - fallback sanity tier を最優先（見た目より “壊れない”）
+# Purpose:
+# - Always render Table 1 / 2A / 2B / 2C (no empty cells; enforce N/A policy)
+# - Stamp provenance (backend/model/tokenizer/config_hash/git_commit/seed) into report.md
+# Notes:
+# - Prioritize the fallback sanity tier (robustness over cosmetics)
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from rlhf_eval_lab.reporting.artifacts import ArtifactsV1
 
 
 def _md_table(headers: List[str], rows: List[List[str]]) -> str:
-    # Markdown table builder（空欄ゼロを強制：None/"" は "N/A"）
+    # Markdown table builder (enforce no empty cells: None/"" -> "N/A")
     def _cell(x: object) -> str:
         if x is None:
             return "N/A"
@@ -46,7 +46,7 @@ def _fmt_float(x: object, nd: int = 4) -> str:
 
         v = float(x)  # type: ignore[arg-type]
 
-        # NaN / inf guard
+        # Guard against NaN / inf to avoid leaking "nan"/"inf" into markdown.
         if v != v:
             return "N/A"
         if v == float("inf") or v == float("-inf"):
@@ -98,7 +98,9 @@ def _provenance_summary_strict(prows: Sequence[Dict[str, str]]) -> Dict[str, str
           (a) exactly 1 unique non-N/A value across all methods, OR
           (b) all N/A (unknown everywhere).
       - Any mixing (including some N/A + some non-N/A) is a hard error.
-        Rationale: report must be self-auditable; partial provenance is not allowed.
+
+    Rationale:
+      - The report must be self-auditable; partial provenance is not allowed.
     """
     keys = ["backend", "model_id", "tokenizer", "config_hash", "git_commit", "seed"]
     out: Dict[str, str] = {}
@@ -113,12 +115,12 @@ def _provenance_summary_strict(prows: Sequence[Dict[str, str]]) -> Dict[str, str
         uniq_non = [v for v in uniq_all if v != "N/A"]
 
         if len(uniq_non) == 0:
-            # all N/A
+            # All N/A
             out[k] = "N/A"
             continue
 
         if len(uniq_non) == 1 and len(uniq_all) == 1:
-            # single value, no N/A
+            # Single value, no N/A
             out[k] = uniq_non[0]
             continue
 
@@ -146,7 +148,7 @@ def _render_provenance_section(arts: Sequence[ArtifactsV1]) -> str:
     ]
     summary_md = _md_table(["Field", "Value"], summary_rows)
 
-    # 安定表示（method_keyでソート）
+    # Stable rendering order (sort by method_key)
     per_rows: List[List[str]] = []
     for r in sorted(prows, key=lambda d: d.get("method_key", "")):
         per_rows.append(
@@ -168,14 +170,45 @@ def _render_provenance_section(arts: Sequence[ArtifactsV1]) -> str:
     parts: List[str] = []
     parts.append("## 🧾 Provenance")
     parts.append("")
-    parts.append("- 目的：report 単体で再現性（backend/model/tokenizer/config/git/seed）を監査できるようにする")
-    parts.append("- ここが揺れる場合は report 生成時点で例外になります（条件固定の破綻を許容しない）")
+    parts.append("- Purpose: make the report self-auditable (backend/model/tokenizer/config/git/seed).")
+    parts.append("- If this section is not stable, report generation must raise (no mixed conditions allowed).")
     parts.append("")
     parts.append("### Summary")
     parts.append(summary_md)
     parts.append("")
     parts.append("### Per-method")
     parts.append(per_md)
+    return "\n".join(parts)
+
+
+def _render_interpretation_section() -> str:
+    """
+    Phase B-2: Embed fixed semantics (how to read the tables) into report.md.
+
+    Notes:
+    - This is not a "result"; it is a fixed spec for interpretation.
+    - Keep wording minimal and safe to avoid any validate_report_md banned tokens.
+    """
+    parts: List[str] = []
+    parts.append("## 📌 Interpretation (How to read the tables)")
+    parts.append("")
+    parts.append("- Every cell is filled with either a **number** or **N/A** (per-column applicability policy).")
+    parts.append("- `↓` means smaller is better; `↑` means larger is better.")
+    parts.append("- `N/A` is not missing: it means the metric is **not applicable** to that method.")
+    parts.append("")
+    parts.append("### Metrics (minimal semantics)")
+    parts.append("- **Off-support ↓**: degree of moving off the data/reward-model support (smaller is safer).")
+    parts.append("- **Tail Var ↓**: variability in the reward tail (smaller means fewer spikes).")
+    parts.append("- **On-support ↑**: average reward within support (larger is better).")
+    parts.append("- **Judge ↑**: external judging score (larger is better).")
+    parts.append("- **Win-rate ↑**: pairwise win rate (larger is better).")
+    parts.append("- **KL ↓**: divergence from the reference policy (smaller means less drift).")
+    parts.append("")
+    parts.append("### Table 2 blocks")
+    parts.append("- **Table 2-A**: diagnostics meaningful only for PPO-family methods (others are N/A).")
+    parts.append("- **Table 2-B**: diagnostics meaningful only for Preference/Active methods (label source is `pref` / `ai`).")
+    parts.append("- **Table 2-C**: safety/robustness for Safety or PPO-family methods (others are N/A).")
+    parts.append("")
     return "\n".join(parts)
 
 
@@ -196,11 +229,15 @@ def render_report_markdown(
     artifacts: Sequence[ArtifactsV1],
 ) -> str:
     """
-    report.py から呼ばれる “公開API名” はこれ。
+    Public API called by report.py.
+
     aggregated: method_key -> metric_key -> value
-    artifacts: ArtifactsV1 の生データ（provenance を report に刻むために必要）
+    artifacts: raw ArtifactsV1 (required to stamp provenance into the report)
     """
     parts: List[str] = []
+
+    # Phase B-2: Interpretation (fixed semantics)
+    parts.append(_render_interpretation_section())
 
     # Table 1
     parts.append("## 🟦 Table 1：Unified Comparison (Main Results)")
