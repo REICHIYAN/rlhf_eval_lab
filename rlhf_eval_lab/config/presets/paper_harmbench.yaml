@@ -1,0 +1,17 @@
+# rlhf_eval_lab/config/presets/paper_harmbench.yaml
+# Paper preset: HarmBench (data not bundled; user provides path)
+
+hf:
+  model_name: gpt2
+  temperature: 1.0
+
+dataset:
+  name: harmbench
+  source: local
+  path: data/harmbench.jsonl # user-provided
+  split: eval
+  subsample_n: 128
+  seed: 0
+
+eval:
+  max_new_tokens: 64
