@@ -34,3 +34,6 @@ report.md
 # OS / editor
 # =========================
 .DS_Store
+
+# local datasets (not bundled)
+data/*.jsonl
