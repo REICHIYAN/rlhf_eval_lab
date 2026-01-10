@@ -19,6 +19,7 @@ from rlhf_eval_lab.reporting.artifacts import ArtifactsV1, write_artifacts
 from rlhf_eval_lab.reporting.provenance import build_provenance
 from rlhf_eval_lab.backends.fallback.backend import FallbackBackend
 from rlhf_eval_lab.train.reward_models.heuristic import HeuristicRewardModel
+from rlhf_eval_lab.data.loaders import load_prompts_from_dataset_config
 
 
 _PPO_METHOD_KEYS = {
@@ -48,12 +49,20 @@ def _truncate_text(s: str) -> str:
 
 def _make_pref_pair(prompt: str, completion: str, reward: float) -> Tuple[str, str]:
     """
-    決定論的に (chosen, rejected) を作る。
+    Deterministically build (chosen, rejected) from a single completion.
     """
     alt = _truncate_text(completion)
     if alt.strip() == (completion or "").strip():
         alt = (completion or "") + " ."
     return (completion, alt) if reward >= 0.0 else (alt, completion)
+
+
+def _builtin_prompts() -> List[str]:
+    return [
+        "Explain what reinforcement learning is.",
+        "What is PPO in simple terms?",
+        "Define reward in machine learning.",
+    ]
 
 
 def run_cmd(args) -> int:
@@ -65,14 +74,26 @@ def run_cmd(args) -> int:
 
     rm = HeuristicRewardModel()
 
-    prompts: List[str] = [
-        "Explain what reinforcement learning is.",
-        "What is PPO in simple terms?",
-        "Define reward in machine learning.",
-    ]
+    # ==========================================================
+    # Prompts SSOT (dataset-aware, but keep fallback-safe)
+    # ==========================================================
+    ds_cfg = cfg.get("dataset", {}) or {}
+    dataset_base_key = "builtin_prompts"
+    dataset_hash = ""
+    if isinstance(ds_cfg, dict) and (ds_cfg.get("name") or ds_cfg.get("path")):
+        prompts, dataset_base_key, dataset_hash = load_prompts_from_dataset_config(ds_cfg)
+    else:
+        prompts = _builtin_prompts()
+
+    if dataset_hash:
+        print(f"[run] dataset={dataset_base_key} prompts={len(prompts)} hash={dataset_hash[:8]}")
+    else:
+        print(f"[run] dataset={dataset_base_key} prompts={len(prompts)}")
 
     max_new = int(cfg.get("eval", {}).get("max_new_tokens", 16))
-    kl_beta_base = float(cfg.get("train", {}).get("kl_beta", 0.1))
+
+    # Backward compatible: allow kl_beta from either ppo.kl_beta or train.kl_beta (older code)
+    kl_beta_base = float(cfg.get("ppo", {}).get("kl_beta", cfg.get("train", {}).get("kl_beta", 0.1)))
     pref_beta = float(cfg.get("train", {}).get("pref_beta", 0.1))
 
     kl_beta_map: Dict[str, float] = {
@@ -88,7 +109,7 @@ def run_cmd(args) -> int:
         ppo_steps = 2
 
     # ==========================================================
-    # ★ Run-level SSOT（ここが今回の本質）
+    # ★ Run-level SSOT
     # ==========================================================
     _set_seed(seed)
     base = FallbackBackend(cfg)
@@ -100,7 +121,7 @@ def run_cmd(args) -> int:
     ppo_base_completions = base.generate(ppo_prompts, max_new_tokens=max_new)
     ppo_base_rewards = rm.score(ppo_prompts, ppo_base_completions)
 
-    # ★ provenance は run 開始時に一度だけ確定（SSOT）
+    # ★ provenance is fixed once per run (SSOT)
     run_provenance = build_provenance(
         cfg,
         backend="fallback",
@@ -120,7 +141,11 @@ def run_cmd(args) -> int:
         _ensure_dir(method_dir)
 
         extra: Dict[str, Any] = {}
+        # Keep existing dataset_key semantics stable; stamp dataset identity into extra.
         dataset_key = "prompts"
+        if dataset_hash:
+            extra["dataset_base_key"] = dataset_base_key
+            extra["dataset_hash"] = dataset_hash
 
         if m.key == "sft":
             completions = list(ppo_base_completions)
@@ -191,7 +216,6 @@ def run_cmd(args) -> int:
             extra["pair_chosen"] = chosen
             extra["pair_rejected"] = rejected
 
-        # ★ provenance は必ず run_provenance を使う
         art = ArtifactsV1(
             method_key=m.key,
             dataset_key=dataset_key,
