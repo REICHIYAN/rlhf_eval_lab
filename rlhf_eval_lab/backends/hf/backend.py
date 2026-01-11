@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import copy
+import logging
 
 import torch
 
@@ -23,9 +24,36 @@ class HFBackend(ModelBackend):
         except Exception as e:
             raise DependencyMissingError(str(e)) from e
 
+        # Transformers のログは実験/CIの監査性のため安定化（必要なら ERROR 以上へ）
+        try:
+            tf.utils.logging.set_verbosity_error()
+            tf.utils.logging.disable_progress_bar()
+        except Exception:
+            pass
+
+        try:
+            logging.getLogger("transformers").setLevel(logging.ERROR)
+        except Exception:
+            pass
+
         model_name = str(config.get("hf", {}).get("model_name", "gpt2"))
+
+        # ------------------------------
+        # ★ warning の発生源を潰す：config を先に作って loss_type を埋めてから model を作る
+        # ------------------------------
+        cfg = tf.AutoConfig.from_pretrained(model_name)
+        # Transformers の版差で「loss_type=None が config に入っている」と warning が出るケースがある。
+        # ここで “確実に” 文字列へ上書きしてから model をロードする。
+        try:
+            setattr(cfg, "loss_type", "ForCausalLMLoss")
+        except Exception:
+            try:
+                cfg.__dict__["loss_type"] = "ForCausalLMLoss"
+            except Exception:
+                pass
+
         self.tokenizer = tf.AutoTokenizer.from_pretrained(model_name)
-        self.model = tf.AutoModelForCausalLM.from_pretrained(model_name)
+        self.model = tf.AutoModelForCausalLM.from_pretrained(model_name, config=cfg)
 
         # GPT2など pad_token が無いモデル向けの安全策
         if self.tokenizer.pad_token_id is None:
@@ -39,7 +67,6 @@ class HFBackend(ModelBackend):
         self.ref_model = None
 
     def clone_reference(self) -> None:
-        # 参照固定（簡易）
         self.ref_model = copy.deepcopy(self.model)
         self.ref_model.to(self.device)
         self.ref_model.eval()
@@ -92,12 +119,10 @@ class HFBackend(ModelBackend):
         grad_clip = float(train_cfg.get("grad_clip", 1.0))
         max_len = int(train_cfg.get("hf_max_seq_len", 256))
 
-        # optimizerは最小でAdamW
         opt = torch.optim.AdamW(self.model.parameters(), lr=lr)
 
         self.model.train()
 
-        # 1 step あたり全textsをまとめて回す（最小・単純）
         last_loss = 0.0
         for _ in range(steps):
             enc = self.tokenizer(
@@ -111,11 +136,15 @@ class HFBackend(ModelBackend):
             input_ids = enc["input_ids"]
             attn = enc.get("attention_mask", None)
 
-            # causal LM: labels=input_ids で teacher forcing
+            # causal LM: pad は loss から除外（-100）
+            labels = input_ids.clone()
+            if attn is not None:
+                labels = labels.masked_fill(attn == 0, -100)
+
             out = self.model(
                 input_ids=input_ids,
                 attention_mask=attn,
-                labels=input_ids,
+                labels=labels,
             )
             loss = out.loss
             if loss is None:
@@ -136,7 +165,6 @@ class HFBackend(ModelBackend):
     def get_ref_kl(self, texts: List[str]) -> List[float]:
         if self.ref_model is None:
             return [0.0 for _ in texts]
-        # 簡易 proxy（logprob差）
         vals: List[float] = []
         for t in texts:
             enc = self.tokenizer(t, return_tensors="pt").to(self.device)
@@ -156,10 +184,21 @@ class HFBackend(ModelBackend):
         lp = logp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1).sum()
         return float(lp.detach().cpu().item())
 
-    def ppo_step(self, prompts: List[str], rewards: List[float]) -> Dict[str, Any]:
-        # HF backend の PPO は本スコープ外（論文実装で拡張）
-        return {"loss": 0.0, "kl_values": [0.0 for _ in prompts], "steps": 0}
+    # NOTE: HF PPO / preference は Step2 以降で拡張。
+    # ここは run.py が HF で呼ばない前提だが、IFの整合性は崩さない。
 
-    def preference_step(self, prompts: List[str], rewards: List[float]) -> Dict[str, Any]:
-        # HF backend の preference は本スコープ外（論文実装で拡張）
-        return {"loss": 0.0, "wins": [0 for _ in prompts], "steps": 0}
+    def ppo_step(
+        self,
+        prompts: List[str],
+        completions: Optional[List[str]] = None,
+        rewards: Optional[List[float]] = None,
+        kl_beta: float = 0.0,
+        ref_state: Optional[Dict[str, torch.Tensor]] = None,
+        update_ref: bool = False,
+    ) -> Dict[str, Any]:
+        _ = (completions, rewards, kl_beta, ref_state, update_ref)
+        return {"loss": 0.0, "kl": 0.0, "steps": 0}
+
+    def preference_step(self, prompt: str, chosen: str, rejected: str, beta: float = 0.1) -> float:
+        _ = (prompt, chosen, rejected, beta)
+        return 0.0
