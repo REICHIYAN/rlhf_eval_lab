@@ -5,7 +5,8 @@
 # 注意：
 # - 研究最適化ではなく sanity tier（fallback）を最優先
 # - HF backend は optional なので遅延 import で守る（transformers未導入でも落とさない）
-# - Step1ではHFは「生成→評価→artifacts」まで（学習は次コミット）
+# - Step1: HFは「生成→評価→artifacts」まで（学習なし）
+# - Step2: HFはSFTのみ最小で学習実行（train.hf_sft_steps > 0 のとき）
 
 from __future__ import annotations
 
@@ -144,12 +145,13 @@ def run_cmd(args) -> int:
     )
 
     # ==========================================================
-    # fallback-only PPO setup (HF step1 does NOT train)
+    # fallback-only PPO setup (HF: PPO training is not in scope yet)
     # ==========================================================
     use_fallback_ppo = prov_backend == "fallback"
 
     kl_beta_base = float(cfg.get("ppo", {}).get("kl_beta", 0.1))
     pref_beta = float(cfg.get("train", {}).get("pref_beta", 0.1))
+    hf_sft_steps = int(cfg.get("train", {}).get("hf_sft_steps", 0))
 
     kl_beta_map: Dict[str, float] = {
         "ppo_standard": 0.0,
@@ -163,20 +165,16 @@ def run_cmd(args) -> int:
     if ppo_steps < 2:
         ppo_steps = 2
 
-    if use_fallback_ppo:
-        # baseline completions/rewards for fallback PPO family
-        ppo_prompts = list(prompts)
-        ppo_base_completions = base_backend.generate(ppo_prompts, max_new_tokens=max_new)
-        ppo_base_rewards = rm.score(ppo_prompts, ppo_base_completions)
+    # Baseline completions/rewards (used for SFT + PPO-family baseline)
+    ppo_prompts = list(prompts)
+    ppo_base_completions = base_backend.generate(ppo_prompts, max_new_tokens=max_new)
+    ppo_base_rewards = rm.score(ppo_prompts, ppo_base_completions)
 
-        # reference snapshots
+    if use_fallback_ppo:
+        # reference snapshots (fallback only)
         ppo_ref_state = {k: v.detach().clone() for k, v in base_backend.ref_model.state_dict().items()}
         ppo_policy_init_state = {k: v.detach().clone() for k, v in base_backend.model.state_dict().items()}
     else:
-        # HF Step1: no PPO training; still define variables to keep code simple
-        ppo_prompts = list(prompts)
-        ppo_base_completions = base_backend.generate(ppo_prompts, max_new_tokens=max_new)
-        ppo_base_rewards = rm.score(ppo_prompts, ppo_base_completions)
         ppo_ref_state = {}
         ppo_policy_init_state = {}
 
@@ -186,8 +184,8 @@ def run_cmd(args) -> int:
     for m in METHOD_SPECS:
         _set_seed(seed)
 
-        # For HF Step1, reuse the already-loaded model to avoid re-downloading per method.
-        # For fallback, keep per-method fresh backend to keep "step actually runs" invariant.
+        # For HF, reuse already-loaded model (avoid reload per method).
+        # For fallback, keep per-method fresh backend for "step actually runs" invariant.
         backend = base_backend if prov_backend == "hf" else FallbackBackend(cfg)
 
         method_dir = os.path.join(out_dir, m.key)
@@ -212,17 +210,27 @@ def run_cmd(args) -> int:
             completions = list(ppo_base_completions)
             rewards = rm.score(prompts, completions)
 
-            # fallback: actually step; hf(step1): keep 0.0 to avoid training
             if prov_backend == "fallback":
+                # fallback: actually step
                 texts = [f"{p} {c}".strip() for p, c in zip(prompts, completions)]
                 loss = backend.sft_step(texts)
                 extra["sft_loss"] = float(loss)
                 extra["steps"] = 1
             else:
-                extra["sft_loss"] = 0.0
-                extra["steps"] = 0
-                extra["skipped"] = True
-                extra["skip_reason"] = "hf_step1_generation_only"
+                # HF Step2: run SFT only when enabled
+                if hf_sft_steps > 0:
+                    texts = [f"{p} {c}".strip() for p, c in zip(prompts, completions)]
+                    loss = backend.sft_step(texts)
+
+                    extra["sft_loss"] = float(loss)
+                    extra["steps"] = int(hf_sft_steps)
+                    extra["skipped"] = False
+                    extra["skip_reason"] = ""
+                else:
+                    extra["sft_loss"] = 0.0
+                    extra["steps"] = 0
+                    extra["skipped"] = True
+                    extra["skip_reason"] = "hf_step1_generation_only"
 
             extra["kl"] = 0.0
             dataset_key = "sft_train"
@@ -267,7 +275,7 @@ def run_cmd(args) -> int:
                     f"ppo_out_keys={sorted(list(last_out.keys()))}"
                 )
             else:
-                # HF Step1: no PPO training yet; emit sane numeric placeholders (never empty)
+                # HF Step1: no PPO training yet; numeric placeholders (never empty)
                 extra["kl"] = 0.0
                 extra["steps"] = 0
                 extra["kl_beta"] = float(kl_beta_map.get(m.key, kl_beta_base))
@@ -283,8 +291,8 @@ def run_cmd(args) -> int:
 
             dataset_key = "pref_train" if m.is_preference_based else "comparisons"
 
-            # fallback: actually step; hf(step1): placeholders only
             if prov_backend == "fallback":
+                # fallback: actually step
                 chosen, rejected = _make_pref_pair(prompts[0], completions[0], rewards[0])
                 loss = backend.preference_step(
                     prompt=prompts[0],
@@ -298,6 +306,7 @@ def run_cmd(args) -> int:
                 extra["pair_chosen"] = chosen
                 extra["pair_rejected"] = rejected
             else:
+                # HF Step1: placeholders only
                 extra["pref_loss"] = 0.0
                 extra["steps"] = 0
                 extra["skipped"] = True
