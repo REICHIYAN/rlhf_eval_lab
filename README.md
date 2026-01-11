@@ -113,6 +113,7 @@ Auditability is enforced per method via `ArtifactsV1.extra`:
 
 * `extra.skipped`: `true|false`
 * `extra.skip_reason`: e.g. `"hf_step1_generation_only"` or `""`
+* `extra.steps`: executed training steps (if any)
 
 This ensures that **every artifact makes the execution mode explicit**.
 
@@ -274,9 +275,19 @@ rlhf-lab report
 rlhf-lab validate --report reports
 ```
 
+### 3) Run paper preset (example: HarmBench)
+
+Put the dataset file at `data/harmbench.jsonl`, then:
+
+```bash
+rlhf-lab run --backend hf --preset paper_harmbench --seed 0
+rlhf-lab report
+rlhf-lab validate --report reports
+```
+
 **SFT minimal training (HF Step2):**
 
-* `paper_hh` enables minimal SFT via `train.hf_sft_steps`.
+* `paper_hh` / `paper_harmbench` can enable minimal SFT via `train.hf_sft_steps`.
 * When enabled, `ArtifactsV1.extra.skipped` is `false` for `sft` and `extra.steps` is set.
 
 ---
@@ -306,6 +317,24 @@ rlhf-lab validate --report reports
 * `rlhf_eval_lab/reporting/` — artifacts, aggregation, Markdown report generation
 * `tests/` — unit/integration tests (DoD gate)
 * `test_data/` — minimal sample JSONL for dataset wiring
+
+---
+
+## Phase‑C Tracker (Level‑C)
+
+| Item    | Goal (what we must implement / freeze)                                                                  | Status             | Evidence (from your logs)                                                                           | Shortest remaining work                                                                                                                 | Remaining est. |
+| ------- | ------------------------------------------------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------: |
+| **C1**  | HF PPO‑RLHF (Standard) minimal‑correct (ratio‑clip + ref fixed + post‑train generations saved)          | **Not started**    | HF training exists only for SFT; PPO‑family on HF still emits `steps=0` placeholders                | Implement **one** HF PPO update step + post‑update `generate` saved to artifacts; end‑to‑end `run→report→validate` with `skipped=False` |             12 |
+| **C2**  | HF KL‑PPO (fixed β)                                                                                     | **Not started**    | depends on C1                                                                                       | Add KL penalty with SSOT KL(π vs ref) definition + fixed β in presets + provenance                                                      |              4 |
+| **C3**  | HF KL‑PPO (adaptive / target‑KL)                                                                        | **Not started**    | depends on C1/C2                                                                                    | Minimal PI/proportional β controller + preset defaults + provenance                                                                     |              5 |
+| **C4**  | HF Safe PPO (penalty / update‑scale decay; no hard filter)                                              | **Not started**    | depends on C1/C2                                                                                    | Add safety penalty or update scaling + connect to HarmBench eval                                                                        |              4 |
+| **C5**  | Metrics fixed at “paper‑definable” level and computable on HF (Off‑support / TailVar / On‑support / KL) | **Partial**        | `rlhf-lab run(hf) → report → validate` succeeds (pipeline wired)                                    | Freeze exact definitions (and thresholds) in code + in report Interpretation; if proxy, name it as proxy                                |            6–8 |
+| **C6**  | HH‑RLHF usable as input (local jsonl + optional HF datasets) with split/seed/subsample frozen           | **Mostly done**    | `dataset=hh_rlhf:train:local ... hash=...` printed; paper preset exists                             | Optional: HF datasets source support; document split/subsample/seed semantics as SSOT                                                   |            3–6 |
+| **C7**  | HarmBench usable as input (loader + eval) with safety policy documented                                 | **Partial (thin)** | paper preset exists; wiring in place                                                                | Confirm loader/schema for real HarmBench JSONL; tighten safety notes; ensure report doesn’t encourage misuse                            |            6–8 |
+| **C8**  | PPO‑family outputs integrated into ArtifactsV1 (SSOT) and tables remain fully populated                 | **Partial**        | HF SFT now runs with training steps; report/validate succeed                                        | Once C1 exists, ensure PPO/KL/Safe all save post‑train completions + diagnostics; keep N/A policy strict                                |            4–6 |
+| **C9**  | Paper presets + “real data path” workflow frozen                                                        | **Done**           | `paper_hh`/`paper_harmbench` presets + `hf_sft_steps` + HF logs stable (loss_type warning silenced) | (only docs polish if desired)                                                                                                           |              0 |
+| **C10** | HF optional tests + machine verification of “no empty cells”                                            | **Not started**    | no HF E2E test yet                                                                                  | Add one pytest integration test that skips if `transformers` missing; runs `run→report→validate` on tiny JSONL                          |              5 |
+| **C11** | Report Interpretation finalized for Phase‑C (definitions, ↑↓, N/A, support/ref assumptions)             | **Partial**        | Interpretation exists, but Phase‑C/HF definitions not fully frozen                                  | Update report header template to include dataset_hash semantics + HF Step1/2 semantics + metric definitions                             |            1–2 |
 
 ---
 
