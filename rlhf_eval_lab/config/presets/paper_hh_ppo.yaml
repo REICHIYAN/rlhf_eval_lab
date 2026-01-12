@@ -1,0 +1,25 @@
+# rlhf_eval_lab/config/presets/paper_hh_ppo.yaml
+# Phase C: HF PPO (minimal) on HH-RLHF wiring.
+# NOTE: PPO implementation is added in HFBackend.ppo_step (C1).
+
+train:
+  hf_sft_steps: 2
+  hf_max_seq_len: 256
+  hf_ppo_steps: 1
+  ppo_clip: 0.2
+  ppo_lr: 1e-6
+
+ppo:
+  kl_beta: 0.0
+
+hf:
+  model_name: gpt2
+  temperature: 1.0
+
+dataset:
+  name: hh_rlhf
+  source: local
+  path: data/hh_rlhf.jsonl
+  split: train
+  subsample_n: 0
+  seed: 0

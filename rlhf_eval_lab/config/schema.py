@@ -21,8 +21,19 @@ class TinyLMConfig:
 
 @dataclass(frozen=True)
 class TrainConfig:
+    # Common
     lr: float = 1e-3
     grad_clip: float = 1.0
+
+    # HF research knobs (safe defaults: disabled)
+    # - SFT (already used by HFBackend.sft_step)
+    hf_sft_steps: int = 0
+    hf_max_seq_len: int = 256
+
+    # - PPO family on HF (next step; safe default: disabled)
+    hf_ppo_steps: int = 0
+    ppo_clip: float = 0.2
+    ppo_lr: float = 1e-6
 
 
 @dataclass(frozen=True)
@@ -81,6 +92,34 @@ def validate_config_dict(cfg: Dict[str, Any]) -> None:
     if arch != "gru":
         raise ConfigError(f"tiny_lm.arch must be 'gru' (got {arch})")
 
+    # train: validate numeric ranges (keep minimal; defaults are safe)
+    train = cfg.get("train", {}) or {}
+    try:
+        lr = float(_get(train, "lr", 1e-3))
+        grad_clip = float(_get(train, "grad_clip", 1.0))
+        hf_sft_steps = int(_get(train, "hf_sft_steps", 0))
+        hf_max_seq_len = int(_get(train, "hf_max_seq_len", 256))
+        hf_ppo_steps = int(_get(train, "hf_ppo_steps", 0))
+        ppo_clip = float(_get(train, "ppo_clip", 0.2))
+        ppo_lr = float(_get(train, "ppo_lr", 1e-6))
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"train section has invalid types: {e}") from e
+
+    if lr <= 0:
+        raise ConfigError(f"train.lr must be > 0 (got {lr})")
+    if grad_clip < 0:
+        raise ConfigError(f"train.grad_clip must be >= 0 (got {grad_clip})")
+    if hf_sft_steps < 0:
+        raise ConfigError(f"train.hf_sft_steps must be >= 0 (got {hf_sft_steps})")
+    if hf_ppo_steps < 0:
+        raise ConfigError(f"train.hf_ppo_steps must be >= 0 (got {hf_ppo_steps})")
+    if hf_max_seq_len <= 0:
+        raise ConfigError(f"train.hf_max_seq_len must be > 0 (got {hf_max_seq_len})")
+    if ppo_clip <= 0:
+        raise ConfigError(f"train.ppo_clip must be > 0 (got {ppo_clip})")
+    if ppo_lr <= 0:
+        raise ConfigError(f"train.ppo_lr must be > 0 (got {ppo_lr})")
+
     # dataset: optional, validate only if section exists and non-empty
     ds = cfg.get("dataset", {}) or {}
     if isinstance(ds, dict) and ds:
@@ -136,6 +175,11 @@ def build_config(cfg: Dict[str, Any]) -> Config:
         train=TrainConfig(
             lr=float(_get(train, "lr", 1e-3)),
             grad_clip=float(_get(train, "grad_clip", 1.0)),
+            hf_sft_steps=int(_get(train, "hf_sft_steps", 0)),
+            hf_max_seq_len=int(_get(train, "hf_max_seq_len", 256)),
+            hf_ppo_steps=int(_get(train, "hf_ppo_steps", 0)),
+            ppo_clip=float(_get(train, "ppo_clip", 0.2)),
+            ppo_lr=float(_get(train, "ppo_lr", 1e-6)),
         ),
         eval=EvalConfig(
             max_new_tokens=int(_get(ev, "max_new_tokens", 16)),

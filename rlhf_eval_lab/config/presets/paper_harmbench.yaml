@@ -18,3 +18,4 @@ eval:
 
 train:
   hf_sft_steps: 2
+  hf_max_seq_len: 256

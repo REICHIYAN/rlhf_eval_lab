@@ -10,9 +10,14 @@ tiny_lm:
   max_seq_len: 128
 
 train:
-  lr: 0.001
   grad_clip: 1.0
   sanity_adv_scale: 10.0
+  lr: 1e-3
+  hf_sft_steps: 0
+  hf_max_seq_len: 256
+  hf_ppo_steps: 0
+  ppo_clip: 0.2
+  ppo_lr: 1e-6
 
 eval:
   max_new_tokens: 16
@@ -23,3 +28,4 @@ ppo:
 hf:
   model_name: gpt2
   temperature: 1.0
+
