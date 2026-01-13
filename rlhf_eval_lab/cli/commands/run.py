@@ -7,6 +7,7 @@
 # - HF backend は optional なので遅延 import で守る（transformers未導入でも落とさない）
 # - Step1: HFは「生成→評価→artifacts」まで（学習なし）
 # - Step2: HFはSFTのみ最小で学習実行（train.hf_sft_steps > 0 のとき）
+# - Step3: HFは PPO を ppo_standard のみ最小で学習実行（train.hf_ppo_steps > 0 のとき）
 
 from __future__ import annotations
 
@@ -132,10 +133,13 @@ def run_cmd(args) -> int:
     max_new = int(cfg.get("eval", {}).get("max_new_tokens", 16))
 
     backend_name = _infer_backend_name(getattr(args, "backend", None), getattr(args, "preset", None))
+
+    # IMPORTANT: seed must be fixed BEFORE backend init (reproducibility)
+    _set_seed(seed)
+
     base_backend, prov_backend, prov_model_id, prov_tokenizer = _make_backend(backend_name, cfg)
 
     # provenance is SSOT: fixed once per run
-    _set_seed(seed)
     run_provenance = build_provenance(
         cfg,
         backend=prov_backend,
@@ -145,13 +149,18 @@ def run_cmd(args) -> int:
     )
 
     # ==========================================================
-    # fallback-only PPO setup (HF: PPO training is not in scope yet)
+    # training knobs
     # ==========================================================
     use_fallback_ppo = prov_backend == "fallback"
 
     kl_beta_base = float(cfg.get("ppo", {}).get("kl_beta", 0.1))
     pref_beta = float(cfg.get("train", {}).get("pref_beta", 0.1))
+
+    # HF knobs (optional)
     hf_sft_steps = int(cfg.get("train", {}).get("hf_sft_steps", 0))
+    hf_ppo_steps = int(cfg.get("train", {}).get("hf_ppo_steps", 0))
+    ppo_clip = float(cfg.get("train", {}).get("ppo_clip", 0.2))
+    ppo_lr = float(cfg.get("train", {}).get("ppo_lr", 1e-6))
 
     kl_beta_map: Dict[str, float] = {
         "ppo_standard": 0.0,
@@ -161,22 +170,29 @@ def run_cmd(args) -> int:
         "adaptive_rm_ppo": kl_beta_base * 1.0,
     }
 
+    # fallback PPO steps (sanity tier)
     ppo_steps = int(cfg.get("train", {}).get("sanity_ppo_steps", 20))
     if ppo_steps < 2:
         ppo_steps = 2
 
     # Baseline completions/rewards (used for SFT + PPO-family baseline)
+    _set_seed(seed)
     ppo_prompts = list(prompts)
     ppo_base_completions = base_backend.generate(ppo_prompts, max_new_tokens=max_new)
     ppo_base_rewards = rm.score(ppo_prompts, ppo_base_completions)
 
+    # reference snapshots (fallback only)
     if use_fallback_ppo:
-        # reference snapshots (fallback only)
         ppo_ref_state = {k: v.detach().clone() for k, v in base_backend.ref_model.state_dict().items()}
         ppo_policy_init_state = {k: v.detach().clone() for k, v in base_backend.model.state_dict().items()}
     else:
         ppo_ref_state = {}
         ppo_policy_init_state = {}
+
+    # HF per-method isolation: keep initial weights snapshot (avoid cross-method contamination)
+    hf_policy_init_state: Dict[str, torch.Tensor] = {}
+    if prov_backend == "hf":
+        hf_policy_init_state = {k: v.detach().clone() for k, v in base_backend.model.state_dict().items()}
 
     # ==========================================================
     # method loop
@@ -187,6 +203,13 @@ def run_cmd(args) -> int:
         # For HF, reuse already-loaded model (avoid reload per method).
         # For fallback, keep per-method fresh backend for "step actually runs" invariant.
         backend = base_backend if prov_backend == "hf" else FallbackBackend(cfg)
+
+        # HF: reset weights every method (strict isolation)
+        if prov_backend == "hf":
+            backend.model.load_state_dict(hf_policy_init_state)
+            # Best-effort: reset PPO optimizer state if present (avoid momentum contamination)
+            if hasattr(backend, "_ppo_optim"):
+                backend._ppo_optim = torch.optim.AdamW(backend.model.parameters(), lr=ppo_lr)
 
         method_dir = os.path.join(out_dir, m.key)
         _ensure_dir(method_dir)
@@ -236,16 +259,17 @@ def run_cmd(args) -> int:
             dataset_key = "sft_train"
 
         # ----------------------------------------------------------
-        # PPO family (fallback-only training in this step)
+        # PPO family
         # ----------------------------------------------------------
         elif m.key in _PPO_METHOD_KEYS:
             completions = list(ppo_base_completions)
             rewards = list(ppo_base_rewards)
 
+            kl_beta_eff = float(kl_beta_map.get(m.key, kl_beta_base))
+
             if use_fallback_ppo:
                 backend.model.load_state_dict(ppo_policy_init_state)
 
-                kl_beta_eff = float(kl_beta_map.get(m.key, kl_beta_base))
                 last_out: Dict[str, float] = {}
                 for _ in range(ppo_steps):
                     out = backend.ppo_step(
@@ -275,12 +299,52 @@ def run_cmd(args) -> int:
                     f"ppo_out_keys={sorted(list(last_out.keys()))}"
                 )
             else:
-                # HF Step1: no PPO training yet; numeric placeholders (never empty)
-                extra["kl"] = 0.0
-                extra["steps"] = 0
-                extra["kl_beta"] = float(kl_beta_map.get(m.key, kl_beta_base))
-                extra["skipped"] = True
-                extra["skip_reason"] = "hf_step1_generation_only"
+                # HF: enable minimal PPO ONLY for ppo_standard when explicitly requested.
+                extra["ppo_clip"] = float(ppo_clip)
+                extra["ppo_lr"] = float(ppo_lr)
+
+                if (m.key == "ppo_standard") and (hf_ppo_steps > 0):
+                    last_out: Dict[str, float] = {}
+                    for _ in range(int(hf_ppo_steps)):
+                        out = backend.ppo_step(
+                            prompts=ppo_prompts,
+                            completions=completions,
+                            rewards=rewards,
+                            kl_beta=kl_beta_eff,
+                            ref_state=None,
+                            update_ref=False,
+                        )
+                        last_out = {k: float(v) for k, v in out.items()}
+
+                    extra.update(last_out)
+                    extra["steps"] = int(hf_ppo_steps)
+                    extra["kl_beta"] = float(kl_beta_eff)
+                    extra["skipped"] = False
+                    extra["skip_reason"] = ""
+
+                    # After update, regenerate completions for artifacts
+                    completions = backend.generate(ppo_prompts, max_new_tokens=max_new)
+                    rewards = rm.score(ppo_prompts, completions)
+
+                    # Populate kl metric (if provided by backend)
+                    if "kl_ref" in extra:
+                        extra["kl"] = float(extra["kl_ref"])
+                    elif "kl_est" in extra:
+                        extra["kl"] = float(extra["kl_est"])
+                    else:
+                        extra["kl"] = 0.0
+
+                    print(
+                        f"[run] method={m.key} hf_ppo_steps={hf_ppo_steps} "
+                        f"ppo_out_keys={sorted(list(last_out.keys()))}"
+                    )
+                else:
+                    # HF Step1: placeholders only
+                    extra["kl"] = 0.0
+                    extra["steps"] = 0
+                    extra["kl_beta"] = float(kl_beta_eff)
+                    extra["skipped"] = True
+                    extra["skip_reason"] = "hf_step1_generation_only"
 
         # ----------------------------------------------------------
         # preference-based + others
