@@ -8,10 +8,12 @@
 # - Step1: HFは「生成→評価→artifacts」まで（学習なし）
 # - Step2: HFはSFTのみ最小で学習実行（train.hf_sft_steps > 0 のとき）
 # - Step3: HFは PPO を ppo_standard のみ最小で学習実行（train.hf_ppo_steps > 0 のとき）
+# - C8: PPO後に再generate→rewardし、pre/post差分をextraに刻む（学習が動いた証拠）
+# - C8+: PPOの「更新が本当に反映されたか」をパラメータchecksumで監査する
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 import os
 import random
 
@@ -44,6 +46,28 @@ def _set_seed(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def _mean(xs: Iterable[float]) -> float:
+    xs = list(xs)
+    if not xs:
+        return 0.0
+    return float(sum(float(x) for x in xs) / len(xs))
+
+
+def _model_checksum(model: torch.nn.Module) -> Tuple[float, float]:
+    """
+    Cheap global checksum for "did parameters change at all?" auditing.
+    Returns (abs_sum, sq_sum). If both deltas are ~0, update likely did not apply.
+    """
+    abs_sum = 0.0
+    sq_sum = 0.0
+    with torch.no_grad():
+        for p in model.parameters():
+            t = p.detach()
+            abs_sum += float(t.abs().sum().item())
+            sq_sum += float((t * t).sum().item())
+    return abs_sum, sq_sum
+
+
 def _truncate_text(s: str) -> str:
     toks = (s or "").split()
     if len(toks) <= 2:
@@ -54,7 +78,9 @@ def _truncate_text(s: str) -> str:
 def _make_pref_pair(prompt: str, completion: str, reward: float) -> Tuple[str, str]:
     """
     Deterministically construct (chosen, rejected) from a completion + scalar reward.
+    (prompt is unused but kept for future extensibility)
     """
+    _ = prompt
     alt = _truncate_text(completion)
     if alt.strip() == (completion or "").strip():
         alt = (completion or "") + " ."
@@ -239,16 +265,24 @@ def run_cmd(args) -> int:
                 loss = backend.sft_step(texts)
                 extra["sft_loss"] = float(loss)
                 extra["steps"] = 1
+                extra["skipped"] = False
+                extra["skip_reason"] = ""
             else:
                 # HF Step2: run SFT only when enabled
                 if hf_sft_steps > 0:
                     texts = [f"{p} {c}".strip() for p, c in zip(prompts, completions)]
-                    loss = backend.sft_step(texts)
-
-                    extra["sft_loss"] = float(loss)
+                    last_loss = 0.0
+                    for _ in range(int(hf_sft_steps)):
+                        loss = backend.sft_step(texts)
+                        last_loss = float(loss)
+                    extra["sft_loss"] = float(last_loss)
                     extra["steps"] = int(hf_sft_steps)
                     extra["skipped"] = False
                     extra["skip_reason"] = ""
+
+                    # Store "after SFT" behavior in artifacts body (audit-friendly)
+                    completions = backend.generate(prompts, max_new_tokens=max_new)
+                    rewards = rm.score(prompts, completions)
                 else:
                     extra["sft_loss"] = 0.0
                     extra["steps"] = 0
@@ -293,6 +327,8 @@ def run_cmd(args) -> int:
 
                 extra["steps"] = int(ppo_steps)
                 extra["kl_beta"] = float(kl_beta_eff)
+                extra["skipped"] = False
+                extra["skip_reason"] = ""
 
                 print(
                     f"[run] method={m.key} kl_beta={kl_beta_eff} steps={ppo_steps} "
@@ -303,7 +339,19 @@ def run_cmd(args) -> int:
                 extra["ppo_clip"] = float(ppo_clip)
                 extra["ppo_lr"] = float(ppo_lr)
 
+                # Ensure numeric placeholders exist (no empty cells in downstream rendering)
+                extra.setdefault("ppo_loss", 0.0)
+                extra.setdefault("ratio_mean", 0.0)
+                extra.setdefault("clipfrac", 0.0)
+                extra.setdefault("kl_ref", 0.0)
+
                 if (m.key == "ppo_standard") and (hf_ppo_steps > 0):
+                    # --- pre snapshot (C8) ---
+                    completions_pre = list(completions)
+                    rewards_pre = list(rewards)
+
+                    abs_pre, sq_pre = _model_checksum(backend.model)
+
                     last_out: Dict[str, float] = {}
                     for _ in range(int(hf_ppo_steps)):
                         out = backend.ppo_step(
@@ -316,15 +364,41 @@ def run_cmd(args) -> int:
                         )
                         last_out = {k: float(v) for k, v in out.items()}
 
+                    abs_post, sq_post = _model_checksum(backend.model)
+
                     extra.update(last_out)
                     extra["steps"] = int(hf_ppo_steps)
                     extra["kl_beta"] = float(kl_beta_eff)
                     extra["skipped"] = False
                     extra["skip_reason"] = ""
 
-                    # After update, regenerate completions for artifacts
-                    completions = backend.generate(ppo_prompts, max_new_tokens=max_new)
-                    rewards = rm.score(ppo_prompts, completions)
+                    # Parameter-change audit (C8+)
+                    extra["param_abs_sum_pre"] = float(abs_pre)
+                    extra["param_abs_sum_post"] = float(abs_post)
+                    extra["param_abs_sum_delta"] = float(abs_post - abs_pre)
+                    extra["param_sq_sum_pre"] = float(sq_pre)
+                    extra["param_sq_sum_post"] = float(sq_post)
+                    extra["param_sq_sum_delta"] = float(sq_post - sq_pre)
+
+                    # After update, regenerate completions for artifacts (C8: post snapshot)
+                    completions_post = backend.generate(ppo_prompts, max_new_tokens=max_new)
+                    rewards_post = rm.score(ppo_prompts, completions_post)
+
+                    extra["pre_reward_mean"] = _mean(rewards_pre)
+                    extra["post_reward_mean"] = _mean(rewards_post)
+                    extra["reward_delta_mean"] = float(extra["post_reward_mean"] - extra["pre_reward_mean"])
+
+                    n = max(1, len(completions_pre))
+                    changed = sum(
+                        1
+                        for a, b in zip(completions_pre, completions_post)
+                        if (a or "").strip() != (b or "").strip()
+                    )
+                    extra["completion_changed_frac"] = float(changed / n)
+
+                    # Store "after PPO" behavior in artifacts body
+                    completions = list(completions_post)
+                    rewards = list(rewards_post)
 
                     # Populate kl metric (if provided by backend)
                     if "kl_ref" in extra:
@@ -333,6 +407,9 @@ def run_cmd(args) -> int:
                         extra["kl"] = float(extra["kl_est"])
                     else:
                         extra["kl"] = 0.0
+
+                    if abs(extra["param_abs_sum_delta"]) < 1e-9 and abs(extra["param_sq_sum_delta"]) < 1e-9:
+                        print("[run][warn] HF PPO produced ~0 parameter change (check optimizer/lr/step application)")
 
                     print(
                         f"[run] method={m.key} hf_ppo_steps={hf_ppo_steps} "
@@ -369,8 +446,10 @@ def run_cmd(args) -> int:
                 extra["pair_prompt"] = prompts[0]
                 extra["pair_chosen"] = chosen
                 extra["pair_rejected"] = rejected
+                extra["skipped"] = False
+                extra["skip_reason"] = ""
             else:
-                # HF Step1: placeholders only
+                # HF Step1: placeholders only (generation+reward is real; training is skipped)
                 extra["pref_loss"] = 0.0
                 extra["steps"] = 0
                 extra["skipped"] = True
