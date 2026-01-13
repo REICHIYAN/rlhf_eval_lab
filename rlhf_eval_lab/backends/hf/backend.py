@@ -25,6 +25,11 @@ class HFBackend:
       - Lazy import transformers (do not break fallback CI).
       - Provide a PPO step compatible with fallback interface used by run.py.
       - Keep runs auditable and deterministic by default.
+
+    Notes:
+      - Decoder-only generation should use left padding.
+      - For PPO math we disable dropout (eval mode) to reduce ratio noise.
+      - `logprobs()` is exposed for auditability (policy-shift checks).
     """
 
     def __init__(self, cfg: Dict[str, Any]):
@@ -38,7 +43,10 @@ class HFBackend:
         self.model_name = str(hf_cfg.get("model_name", "gpt2"))
         self.temperature = float(hf_cfg.get("temperature", 1.0))
 
+        # SFT optimizer lr (legacy key: train.lr)
         self.train_lr = float(train_cfg.get("lr", 1e-3))
+
+        # PPO knobs
         self.ppo_lr = float(train_cfg.get("ppo_lr", 1e-6))
         self.ppo_clip = float(train_cfg.get("ppo_clip", 0.2))
         self.grad_clip = float(train_cfg.get("grad_clip", 1.0))
@@ -111,6 +119,26 @@ class HFBackend:
                 res.append(t.strip())
         return res
 
+    def logprobs(self, prompts: Sequence[str], completions: Sequence[str]) -> List[float]:
+        """
+        Public wrapper for auditability:
+        returns sum logprob over completion tokens for each (prompt, completion).
+
+        - Dropout OFF (eval)
+        - No grads (torch.no_grad)
+        - Restores original training mode
+        """
+        if len(prompts) != len(completions):
+            raise ValueError("HFBackend.logprobs expects prompts and completions with the same length")
+
+        was_training = self.model.training
+        self.model.eval()
+        with torch.no_grad():
+            lp_sum = self._logprob_completion_sum(self.model, prompts, completions)
+        self.model.train(was_training)
+
+        return [float(x) for x in lp_sum.detach().cpu().tolist()]
+
     def sft_step(self, texts: Sequence[str]) -> float:
         enc = self.tokenizer(
             list(texts),
@@ -139,7 +167,7 @@ class HFBackend:
     def preference_step(self, prompt: str, chosen: str, rejected: str, beta: float = 0.1) -> float:
         beta_f = float(beta)
 
-        # Disable dropout for logprob (stability)
+        # Disable dropout for logprob (stability) but keep gradients
         was_training = self.model.training
         self.model.eval()
         lp_c = self._logprob_completion_sum(self.model, [prompt], [chosen])[0]
@@ -173,6 +201,7 @@ class HFBackend:
         Key stability choice:
           - Compute logprobs with dropout OFF (eval mode) to avoid ratio noise.
         """
+        _ = ref_state
         if rewards is None:
             raise ValueError("HFBackend.ppo_step requires rewards")
 
@@ -212,7 +241,7 @@ class HFBackend:
         surr2 = clipped * adv
         surr = torch.minimum(surr1, surr2)
 
-        approx_kl = (logp_new - logp_ref)  # per-token mean
+        approx_kl = (logp_new - logp_ref)  # per-token mean (policy vs ref)
         loss = -(surr.mean()) + klb * approx_kl.mean()
 
         self._ppo_optim.zero_grad(set_to_none=True)
