@@ -198,10 +198,16 @@ class HFBackend:
         """
         PPO step with fallback-compatible interface.
 
-        Key stability choice:
-          - Compute logprobs with dropout OFF (eval mode) to avoid ratio noise.
+        We return *post-update* diagnostics for auditability:
+          - ratio_mean: exp(logp_post - logp_old) mean
+          - kl_ref: (logp_post - logp_ref) mean
+          - clipfrac: computed from post-update ratio
+
+        Additionally:
+          - ratio_mean_pre, kl_ref_pre: pre-update values (should be ~1 and near previous kl)
         """
-        _ = ref_state
+        _ = ref_state  # intentionally unused
+
         if rewards is None:
             raise ValueError("HFBackend.ppo_step requires rewards")
 
@@ -210,7 +216,7 @@ class HFBackend:
 
         rewards_t = torch.tensor(list(rewards), dtype=torch.float32, device=self.device)
         adv = rewards_t - rewards_t.mean()
-        if torch.allclose(adv.abs().sum(), torch.tensor(0.0, device=self.device)):
+        if float(adv.abs().sum().detach().cpu().item()) < 1e-12:
             adv = rewards_t
 
         clip = float(self.ppo_clip)
@@ -220,11 +226,12 @@ class HFBackend:
         was_training = self.model.training
         self.model.eval()
 
+        # Pre-update (old/ref) logprobs
         with torch.no_grad():
             logp_old_sum = self._logprob_completion_sum(self.model, prompts, completions)
             logp_ref_sum = self._logprob_completion_sum(self.ref_model, prompts, completions)
 
-        # Forward with grad (still eval => dropout off, but grads still flow)
+        # Pre-update "new" logprob with grad enabled (same weights as old at this point)
         logp_new_sum = self._logprob_completion_sum(self.model, prompts, completions)
 
         tok_cnt = self._completion_token_counts(prompts, completions).to(self.device)
@@ -234,15 +241,15 @@ class HFBackend:
         logp_new = logp_new_sum / tok_cnt
         logp_ref = logp_ref_sum / tok_cnt
 
-        ratio = torch.exp(logp_new - logp_old)
-        clipped = torch.clamp(ratio, 1.0 - clip, 1.0 + clip)
+        ratio_pre = torch.exp(logp_new - logp_old)
+        clipped_pre = torch.clamp(ratio_pre, 1.0 - clip, 1.0 + clip)
 
-        surr1 = ratio * adv
-        surr2 = clipped * adv
+        surr1 = ratio_pre * adv
+        surr2 = clipped_pre * adv
         surr = torch.minimum(surr1, surr2)
 
-        approx_kl = (logp_new - logp_ref)  # per-token mean (policy vs ref)
-        loss = -(surr.mean()) + klb * approx_kl.mean()
+        kl_pre = (logp_new - logp_ref)  # per-token mean
+        loss = -(surr.mean()) + klb * kl_pre.mean()
 
         self._ppo_optim.zero_grad(set_to_none=True)
         loss.backward()
@@ -250,7 +257,15 @@ class HFBackend:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
         self._ppo_optim.step()
 
-        clipfrac = ((ratio > (1.0 + clip)) | (ratio < (1.0 - clip))).float().mean()
+        # Post-update diagnostics: recompute logprob with updated parameters
+        with torch.no_grad():
+            logp_post_sum = self._logprob_completion_sum(self.model, prompts, completions)
+
+        logp_post = logp_post_sum / tok_cnt
+        ratio_post = torch.exp(logp_post - logp_old)
+        kl_post = (logp_post - logp_ref)
+
+        clipfrac_post = ((ratio_post > (1.0 + clip)) | (ratio_post < (1.0 - clip))).float().mean()
 
         if update_ref:
             self.ref_model.load_state_dict(self.model.state_dict())
@@ -260,9 +275,12 @@ class HFBackend:
 
         return {
             "ppo_loss": float(loss.detach().cpu().item()),
-            "ratio_mean": float(ratio.detach().mean().cpu().item()),
-            "clipfrac": float(clipfrac.detach().cpu().item()),
-            "kl_ref": float(approx_kl.detach().mean().cpu().item()),
+            "ratio_mean": float(ratio_post.detach().mean().cpu().item()),
+            "clipfrac": float(clipfrac_post.detach().cpu().item()),
+            "kl_ref": float(kl_post.detach().mean().cpu().item()),
+            # audit helpers
+            "ratio_mean_pre": float(ratio_pre.detach().mean().cpu().item()),
+            "kl_ref_pre": float(kl_pre.detach().mean().cpu().item()),
         }
 
     # -------------------------
