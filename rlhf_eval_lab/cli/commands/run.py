@@ -10,10 +10,11 @@
 # - Step3: HFは PPO を ppo_standard のみ最小で学習実行（train.hf_ppo_steps > 0 のとき）
 # - C8: PPO後に再generate→rewardし、pre/post差分をextraに刻む（学習が動いた証拠）
 # - C8+: PPOの「更新が本当に反映されたか」をパラメータchecksumで監査する
+# - C8++: 出力が変わらなくても「分布が動いた」を logprob delta で監査する（HFのみ）
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, Tuple
 import os
 import random
 
@@ -209,6 +210,7 @@ def run_cmd(args) -> int:
 
     # reference snapshots (fallback only)
     if use_fallback_ppo:
+        # NOTE: rely on base_backend having model/ref_model in fallback layer
         ppo_ref_state = {k: v.detach().clone() for k, v in base_backend.ref_model.state_dict().items()}
         ppo_policy_init_state = {k: v.detach().clone() for k, v in base_backend.model.state_dict().items()}
     else:
@@ -233,9 +235,12 @@ def run_cmd(args) -> int:
         # HF: reset weights every method (strict isolation)
         if prov_backend == "hf":
             backend.model.load_state_dict(hf_policy_init_state)
-            # Best-effort: reset PPO optimizer state if present (avoid momentum contamination)
+
+            # Best-effort: reset optimizer state if present (avoid momentum contamination)
             if hasattr(backend, "_ppo_optim"):
                 backend._ppo_optim = torch.optim.AdamW(backend.model.parameters(), lr=ppo_lr)
+            if hasattr(backend, "_sft_optim"):
+                backend._sft_optim = torch.optim.AdamW(backend.model.parameters(), lr=float(cfg.get("train", {}).get("lr", 1e-3)))
 
         method_dir = os.path.join(out_dir, m.key)
         _ensure_dir(method_dir)
@@ -275,6 +280,7 @@ def run_cmd(args) -> int:
                     for _ in range(int(hf_sft_steps)):
                         loss = backend.sft_step(texts)
                         last_loss = float(loss)
+
                     extra["sft_loss"] = float(last_loss)
                     extra["steps"] = int(hf_sft_steps)
                     extra["skipped"] = False
@@ -350,6 +356,12 @@ def run_cmd(args) -> int:
                     completions_pre = list(completions)
                     rewards_pre = list(rewards)
 
+                    # C8++: distribution shift audit (same completions, pre)
+                    try:
+                        lp_pre_mean = _mean(backend.logprobs(ppo_prompts, completions_pre))
+                    except Exception:
+                        lp_pre_mean = 0.0
+
                     abs_pre, sq_pre = _model_checksum(backend.model)
 
                     last_out: Dict[str, float] = {}
@@ -366,6 +378,12 @@ def run_cmd(args) -> int:
 
                     abs_post, sq_post = _model_checksum(backend.model)
 
+                    # C8++: distribution shift audit (same completions, post)
+                    try:
+                        lp_post_mean = _mean(backend.logprobs(ppo_prompts, completions_pre))
+                    except Exception:
+                        lp_post_mean = lp_pre_mean
+
                     extra.update(last_out)
                     extra["steps"] = int(hf_ppo_steps)
                     extra["kl_beta"] = float(kl_beta_eff)
@@ -379,6 +397,11 @@ def run_cmd(args) -> int:
                     extra["param_sq_sum_pre"] = float(sq_pre)
                     extra["param_sq_sum_post"] = float(sq_post)
                     extra["param_sq_sum_delta"] = float(sq_post - sq_pre)
+
+                    # Logprob-shift audit (C8++)
+                    extra["pre_logprob_mean_on_pre"] = float(lp_pre_mean)
+                    extra["post_logprob_mean_on_pre"] = float(lp_post_mean)
+                    extra["logprob_delta_mean_on_pre"] = float(lp_post_mean - lp_pre_mean)
 
                     # After update, regenerate completions for artifacts (C8: post snapshot)
                     completions_post = backend.generate(ppo_prompts, max_new_tokens=max_new)
