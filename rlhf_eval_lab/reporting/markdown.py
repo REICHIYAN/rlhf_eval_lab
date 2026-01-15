@@ -4,6 +4,7 @@
 # - Stamp provenance (backend/model/tokenizer/config_hash/git_commit/seed) into report.md
 # Notes:
 # - Prioritize the fallback sanity tier (robustness over cosmetics)
+# - HF backend metrics include proxy-KL diagnostics (see Interpretation)
 
 from __future__ import annotations
 
@@ -192,7 +193,9 @@ def _render_interpretation_section() -> str:
     parts: List[str] = []
     parts.append("## 📌 Interpretation (Phase C / HF)")
     parts.append("")
-    parts.append("This report is **self-auditable**: every cell is either a numeric value or column-policy `N/A` (never missing).")
+    parts.append(
+        "This report is **self-auditable**: every cell is either a numeric value or column-policy `N/A` (never missing)."
+    )
     parts.append("`N/A` means **not applicable by design**, not missing data.")
     parts.append("")
     parts.append("### Execution modes (two layers)")
@@ -209,6 +212,7 @@ def _render_interpretation_section() -> str:
     parts.append("- `extra.skip_reason`: e.g. `hf_step1_generation_only` or `\"\"`")
     parts.append("- `extra.steps`: number of executed update steps (0 if no training)")
     parts.append("")
+
     parts.append("### Dataset SSOT & reproducibility")
     parts.append("")
     parts.append("Each run fixes dataset identity as:")
@@ -219,6 +223,7 @@ def _render_interpretation_section() -> str:
     parts.append("Reproducibility relies on fixed `seed` and preset-controlled split/subsample policy.")
     parts.append("If `dataset_key` or `dataset_hash` differ across methods, comparisons are not meaningful.")
     parts.append("")
+
     parts.append("### Metric semantics (direction & applicability)")
     parts.append("")
     parts.append("- `↓` lower is better; `↑` higher is better.")
@@ -232,6 +237,29 @@ def _render_interpretation_section() -> str:
     parts.append("- **Win-rate ↑ / Judge ↑**: comparison/judge signals when available (otherwise `N/A`).")
     parts.append("- **KL ↓**: divergence from the reference policy (policy drift).")
     parts.append("")
+
+    # --- C1.7: Clarify HF KL proxy & PPO ratio diagnostics (pre/post) ---
+    parts.append("### KL & PPO diagnostics (HF backend)")
+    parts.append("")
+    parts.append(
+        "For `backend=hf`, KL-related values shown in the tables are **audit-oriented proxies** derived from sampled "
+        "trajectory log-probabilities (token-mean), not the full-distribution KL."
+    )
+    parts.append("")
+    parts.append("- `kl`: preferred **non-negative proxy** (stable for reporting)")
+    parts.append("  - `kl = E[ | logp_post - logp_ref | ]` (token-mean)")
+    parts.append("- `kl_ref_sq`: squared-difference proxy for drift magnitude")
+    parts.append("  - `kl_ref_sq = E[ (logp_post - logp_ref)^2 ]` (token-mean)")
+    parts.append("- `kl_ref` / `kl_ref_pre`: signed mean differences kept for debugging (can be negative)")
+    parts.append("  - `kl_ref = E[ logp_post - logp_ref ]`, `kl_ref_pre = E[ logp_pre - logp_ref ]`")
+    parts.append("")
+    parts.append("PPO ratio diagnostics are computed on per-token mean logprobs:")
+    parts.append("")
+    parts.append("- `ratio_mean_pre`: pre-update `E[ exp(logp_pre - logp_old) ]` (typically ≈ 1)")
+    parts.append("- `ratio_mean`: post-update `E[ exp(logp_post - logp_old) ]`")
+    parts.append("- `clipfrac`: fraction of samples where post-update ratio is outside `[1-clip, 1+clip]`")
+    parts.append("")
+
     parts.append("### Table 2 blocks")
     parts.append("")
     parts.append("- **Table 2-A**: diagnostics meaningful only for PPO-family methods (others are `N/A`).")
