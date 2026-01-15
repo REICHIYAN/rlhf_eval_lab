@@ -11,23 +11,23 @@
 # - C8: PPO後に再generate→rewardし、pre/post差分をextraに刻む（学習が動いた証拠）
 # - C8+: PPOの「更新が本当に反映されたか」をパラメータchecksumで監査する
 # - C8++: 出力が変わらなくても「分布が動いた」を logprob delta で監査する（HFのみ）
+# - C1.6+: KLの見た目事故（符号）を避けるため、HFでは非負proxyを優先して extra["kl"] を埋める
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Tuple
 import os
 import random
+from typing import Any, Dict, Iterable, Tuple
 
 import torch
 
+from rlhf_eval_lab.backends.fallback.backend import FallbackBackend
 from rlhf_eval_lab.config.io import load_config
+from rlhf_eval_lab.data.loaders import load_prompts_from_dataset_config
 from rlhf_eval_lab.registry.methods import METHOD_SPECS
 from rlhf_eval_lab.reporting.artifacts import ArtifactsV1, write_artifacts
 from rlhf_eval_lab.reporting.provenance import build_provenance
-from rlhf_eval_lab.backends.fallback.backend import FallbackBackend
 from rlhf_eval_lab.train.reward_models.heuristic import HeuristicRewardModel
-from rlhf_eval_lab.data.loaders import load_prompts_from_dataset_config
-
 
 _PPO_METHOD_KEYS = {
     "ppo_standard",
@@ -114,7 +114,7 @@ def _make_backend(backend_name: str, cfg: Dict[str, Any]):
         # lazy import to avoid import error when transformers is not installed
         from rlhf_eval_lab.backends.hf.backend import HFBackend  # pylint: disable=import-error
 
-        model_name = str(cfg.get("hf", {}).get("model_name", "gpt2"))
+        model_name = str((cfg.get("hf", {}) or {}).get("model_name", "gpt2"))
         backend = HFBackend(cfg)
         model_id = model_name
         tokenizer = f"hf:{model_name}"
@@ -125,6 +125,31 @@ def _make_backend(backend_name: str, cfg: Dict[str, Any]):
     model_id = "tiny-gru"
     tokenizer = "simple"
     return backend, "fallback", model_id, tokenizer
+
+
+def _choose_nonneg_kl_proxy(extra: Dict[str, Any]) -> float:
+    """
+    HF PPO "KL" display policy (C1.6+):
+      - Prefer nonnegative proxies if available.
+      - Fall back to abs(kl_ref) / abs(kl_est) as a last resort.
+    """
+    for k in ("kl_ref_abs", "kl_est_abs"):
+        v = extra.get(k)
+        if v is not None:
+            try:
+                return float(v)
+            except Exception:
+                pass
+
+    for k in ("kl_ref", "kl_est"):
+        v = extra.get(k)
+        if v is not None:
+            try:
+                return float(abs(float(v)))
+            except Exception:
+                pass
+
+    return 0.0
 
 
 def run_cmd(args) -> int:
@@ -157,8 +182,7 @@ def run_cmd(args) -> int:
     else:
         print(f"[run] dataset={dataset_base_key} prompts={len(prompts)}")
 
-    max_new = int(cfg.get("eval", {}).get("max_new_tokens", 16))
-
+    max_new = int((cfg.get("eval", {}) or {}).get("max_new_tokens", 16))
     backend_name = _infer_backend_name(getattr(args, "backend", None), getattr(args, "preset", None))
 
     # IMPORTANT: seed must be fixed BEFORE backend init (reproducibility)
@@ -180,14 +204,16 @@ def run_cmd(args) -> int:
     # ==========================================================
     use_fallback_ppo = prov_backend == "fallback"
 
-    kl_beta_base = float(cfg.get("ppo", {}).get("kl_beta", 0.1))
-    pref_beta = float(cfg.get("train", {}).get("pref_beta", 0.1))
+    kl_beta_base = float((cfg.get("ppo", {}) or {}).get("kl_beta", 0.1))
+    pref_beta = float((cfg.get("train", {}) or {}).get("pref_beta", 0.1))
 
     # HF knobs (optional)
-    hf_sft_steps = int(cfg.get("train", {}).get("hf_sft_steps", 0))
-    hf_ppo_steps = int(cfg.get("train", {}).get("hf_ppo_steps", 0))
-    ppo_clip = float(cfg.get("train", {}).get("ppo_clip", 0.2))
-    ppo_lr = float(cfg.get("train", {}).get("ppo_lr", 1e-6))
+    train_cfg = cfg.get("train", {}) or {}
+    hf_sft_steps = int(train_cfg.get("hf_sft_steps", 0))
+    hf_ppo_steps = int(train_cfg.get("hf_ppo_steps", 0))
+    ppo_clip = float(train_cfg.get("ppo_clip", 0.2))
+    ppo_lr = float(train_cfg.get("ppo_lr", 1e-6))
+    sft_lr = float(train_cfg.get("lr", 1e-3))
 
     kl_beta_map: Dict[str, float] = {
         "ppo_standard": 0.0,
@@ -198,7 +224,7 @@ def run_cmd(args) -> int:
     }
 
     # fallback PPO steps (sanity tier)
-    ppo_steps = int(cfg.get("train", {}).get("sanity_ppo_steps", 20))
+    ppo_steps = int(train_cfg.get("sanity_ppo_steps", 20))
     if ppo_steps < 2:
         ppo_steps = 2
 
@@ -236,11 +262,11 @@ def run_cmd(args) -> int:
         if prov_backend == "hf":
             backend.model.load_state_dict(hf_policy_init_state)
 
-            # Best-effort: reset optimizer state if present (avoid momentum contamination)
+            # Best-effort: reset optimizer state (avoid momentum contamination)
             if hasattr(backend, "_ppo_optim"):
                 backend._ppo_optim = torch.optim.AdamW(backend.model.parameters(), lr=ppo_lr)
             if hasattr(backend, "_sft_optim"):
-                backend._sft_optim = torch.optim.AdamW(backend.model.parameters(), lr=float(cfg.get("train", {}).get("lr", 1e-3)))
+                backend._sft_optim = torch.optim.AdamW(backend.model.parameters(), lr=sft_lr)
 
         method_dir = os.path.join(out_dir, m.key)
         _ensure_dir(method_dir)
@@ -346,10 +372,17 @@ def run_cmd(args) -> int:
                 extra["ppo_lr"] = float(ppo_lr)
 
                 # Ensure numeric placeholders exist (no empty cells in downstream rendering)
-                extra.setdefault("ppo_loss", 0.0)
-                extra.setdefault("ratio_mean", 0.0)
-                extra.setdefault("clipfrac", 0.0)
-                extra.setdefault("kl_ref", 0.0)
+                for k in (
+                    "ppo_loss",
+                    "ratio_mean",
+                    "clipfrac",
+                    "kl_ref",
+                    "ratio_mean_pre",
+                    "kl_ref_pre",
+                    "kl_ref_abs",
+                    "kl_ref_sq",
+                ):
+                    extra.setdefault(k, 0.0)
 
                 if (m.key == "ppo_standard") and (hf_ppo_steps > 0):
                     # --- pre snapshot (C8) ---
@@ -423,15 +456,10 @@ def run_cmd(args) -> int:
                     completions = list(completions_post)
                     rewards = list(rewards_post)
 
-                    # Populate kl metric (if provided by backend)
-                    if "kl_ref" in extra:
-                        extra["kl"] = float(extra["kl_ref"])
-                    elif "kl_est" in extra:
-                        extra["kl"] = float(extra["kl_est"])
-                    else:
-                        extra["kl"] = 0.0
+                    # Populate kl metric (C1.6+): prefer nonnegative proxy for report stability
+                    extra["kl"] = _choose_nonneg_kl_proxy(extra)
 
-                    if abs(extra["param_abs_sum_delta"]) < 1e-9 and abs(extra["param_sq_sum_delta"]) < 1e-9:
+                    if abs(extra.get("param_abs_sum_delta", 0.0)) < 1e-9 and abs(extra.get("param_sq_sum_delta", 0.0)) < 1e-9:
                         print("[run][warn] HF PPO produced ~0 parameter change (check optimizer/lr/step application)")
 
                     print(
