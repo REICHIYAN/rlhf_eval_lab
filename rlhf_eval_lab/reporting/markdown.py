@@ -4,7 +4,7 @@
 # - Stamp provenance (backend/model/tokenizer/config_hash/git_commit/seed) into report.md
 # Notes:
 # - Prioritize the fallback sanity tier (robustness over cosmetics)
-# - HF backend metrics include proxy-KL diagnostics (see Interpretation)
+# - HF backend metrics include proxy-KL + PPO audit diagnostics (see Interpretation)
 
 from __future__ import annotations
 
@@ -262,7 +262,10 @@ def _render_interpretation_section() -> str:
 
     parts.append("### Table 2 blocks")
     parts.append("")
-    parts.append("- **Table 2-A**: diagnostics meaningful only for PPO-family methods (others are `N/A`).")
+    parts.append(
+        "- **Table 2-A**: PPO-family audit diagnostics (`ppo_loss`, `ratio_mean`, `clipfrac`, `kl_ref_abs`, `kl_ref_sq`). "
+        "Non-PPO methods are `N/A` by policy."
+    )
     parts.append("- **Table 2-B**: diagnostics meaningful only for Preference/Active methods (label source is `pref` / `ai`).")
     parts.append("- **Table 2-C**: safety/robustness diagnostics (may be `N/A` depending on dataset/method).")
     parts.append("")
@@ -327,17 +330,26 @@ def render_report_markdown(
     parts.append(_md_table(t1_headers, t1_rows))
     parts.append("")
 
-    # Table 2-A
-    parts.append("## 🟩 Table 2-A：PPO-family Diagnostics")
-    t2a_headers = ["Method", "KL Stability", "Reward Var", "Convergence Speed"]
+    # Table 2-A (C1.9-ready: expose PPO audit diagnostics if available)
+    parts.append("## 🟩 Table 2-A：PPO-family Diagnostics (Audit)")
+    t2a_headers = [
+        "Method",
+        "PPO loss ↓",
+        "Ratio mean",
+        "Clipfrac ↓",
+        "KL abs ↓",
+        "KL sq ↓",
+    ]
     t2a_rows: List[List[str]] = []
     for method_key, metrics in _stable_items(aggregated):
         t2a_rows.append(
             [
                 _method_label(method_key, metrics),
-                _fmt_float(metrics.get("kl_stability"), 4),
-                _fmt_float(metrics.get("reward_var"), 4),
-                _fmt_float(metrics.get("convergence_speed"), 4),
+                _fmt_float(metrics.get("ppo_loss"), 6),
+                _fmt_float(metrics.get("ratio_mean"), 6),
+                _fmt_float(metrics.get("clipfrac"), 6),
+                _fmt_float(metrics.get("kl_ref_abs"), 6),
+                _fmt_float(metrics.get("kl_ref_sq"), 6),
             ]
         )
     parts.append(_md_table(t2a_headers, t2a_rows))
