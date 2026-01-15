@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 import copy
 
@@ -200,11 +200,12 @@ class HFBackend:
 
         We return *post-update* diagnostics for auditability:
           - ratio_mean: exp(logp_post - logp_old) mean
-          - kl_ref: (logp_post - logp_ref) mean
+          - kl_ref: (logp_post - logp_ref) mean   (signed; not a true KL)
           - clipfrac: computed from post-update ratio
 
         Additionally:
-          - ratio_mean_pre, kl_ref_pre: pre-update values (should be ~1 and near previous kl)
+          - ratio_mean_pre, kl_ref_pre: pre-update values
+          - kl_ref_abs, kl_ref_sq: nonnegative KL-proxy diagnostics (post-update)
         """
         _ = ref_state  # intentionally unused
 
@@ -248,7 +249,7 @@ class HFBackend:
         surr2 = clipped_pre * adv
         surr = torch.minimum(surr1, surr2)
 
-        kl_pre = (logp_new - logp_ref)  # per-token mean
+        kl_pre = (logp_new - logp_ref)  # per-token mean (signed)
         loss = -(surr.mean()) + klb * kl_pre.mean()
 
         self._ppo_optim.zero_grad(set_to_none=True)
@@ -263,7 +264,11 @@ class HFBackend:
 
         logp_post = logp_post_sum / tok_cnt
         ratio_post = torch.exp(logp_post - logp_old)
-        kl_post = (logp_post - logp_ref)
+
+        # "KL proxy" relative to frozen reference (signed + nonnegative proxies)
+        kl_post = (logp_post - logp_ref)  # per-token mean (signed)
+        kl_ref_abs = kl_post.abs().mean()
+        kl_ref_sq = (kl_post * kl_post).mean()
 
         clipfrac_post = ((ratio_post > (1.0 + clip)) | (ratio_post < (1.0 - clip))).float().mean()
 
@@ -278,9 +283,12 @@ class HFBackend:
             "ratio_mean": float(ratio_post.detach().mean().cpu().item()),
             "clipfrac": float(clipfrac_post.detach().cpu().item()),
             "kl_ref": float(kl_post.detach().mean().cpu().item()),
-            # audit helpers
+            # audit helpers (pre)
             "ratio_mean_pre": float(ratio_pre.detach().mean().cpu().item()),
             "kl_ref_pre": float(kl_pre.detach().mean().cpu().item()),
+            # nonnegative KL proxy (post)
+            "kl_ref_abs": float(kl_ref_abs.detach().cpu().item()),
+            "kl_ref_sq": float(kl_ref_sq.detach().cpu().item()),
         }
 
     # -------------------------
