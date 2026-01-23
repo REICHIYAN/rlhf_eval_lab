@@ -211,6 +211,13 @@ def run_cmd(args) -> int:
     train_cfg = cfg.get("train", {}) or {}
     hf_sft_steps = int(train_cfg.get("hf_sft_steps", 0))
     hf_ppo_steps = int(train_cfg.get("hf_ppo_steps", 0))
+    hf_ppo_method_keys_raw = train_cfg.get("hf_ppo_method_keys", None)
+    if hf_ppo_method_keys_raw is None:
+        hf_ppo_method_keys = {"ppo_standard"}
+    elif isinstance(hf_ppo_method_keys_raw, (list, tuple, set)):
+        hf_ppo_method_keys = {str(x) for x in hf_ppo_method_keys_raw}
+    else:
+        hf_ppo_method_keys = {str(hf_ppo_method_keys_raw)}
     ppo_clip = float(train_cfg.get("ppo_clip", 0.2))
     ppo_lr = float(train_cfg.get("ppo_lr", 1e-6))
     sft_lr = float(train_cfg.get("lr", 1e-3))
@@ -384,7 +391,7 @@ def run_cmd(args) -> int:
                 ):
                     extra.setdefault(k, 0.0)
 
-                if (m.key == "ppo_standard") and (hf_ppo_steps > 0):
+                if (m.key in hf_ppo_method_keys) and (hf_ppo_steps > 0):
                     # --- pre snapshot (C8) ---
                     completions_pre = list(completions)
                     rewards_pre = list(rewards)
