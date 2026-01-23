@@ -1,0 +1,63 @@
+{"prompt": "Explain reinforcement learning in simple terms with an everyday analogy.", "id": "offline_0000"}
+{"prompt": "What is PPO and why does clipping help? Give a high-level explanation.", "id": "offline_0001"}
+{"prompt": "Define reward hacking and give one concrete example.", "id": "offline_0002"}
+{"prompt": "Explain the difference between supervised learning and reinforcement learning.", "id": "offline_0003"}
+{"prompt": "What is KL divergence intuitively? Avoid formulas.", "id": "offline_0004"}
+{"prompt": "Describe what 'distribution shift' means in model evaluation.", "id": "offline_0005"}
+{"prompt": "Give a short checklist for debugging a failing CI pipeline.", "id": "offline_0006"}
+{"prompt": "Write a concise summary of why reproducibility matters in ML experiments.", "id": "offline_0007"}
+{"prompt": "Explain what a baseline is and how to choose a good baseline.", "id": "offline_0008"}
+{"prompt": "Describe what a reward model is in RLHF and what can go wrong.", "id": "offline_0009"}
+{"prompt": "Give practical tips for writing clear, actionable code review comments.", "id": "offline_0010"}
+{"prompt": "Draft a short email politely declining an invitation due to schedule constraints.", "id": "offline_0011"}
+{"prompt": "Write a friendly apology message for forgetting a friend's birthday.", "id": "offline_0012"}
+{"prompt": "Suggest ways to resolve a disagreement with a coworker constructively.", "id": "offline_0013"}
+{"prompt": "Give tips for staying focused while working from home.", "id": "offline_0014"}
+{"prompt": "Explain precision vs recall with a simple example.", "id": "offline_0015"}
+{"prompt": "Explain overfitting and how to detect it.", "id": "offline_0016"}
+{"prompt": "Explain data leakage and how to avoid it.", "id": "offline_0017"}
+{"prompt": "Explain what perplexity measures and what it does not measure.", "id": "offline_0018"}
+{"prompt": "Describe why random seeds do not guarantee perfect reproducibility.", "id": "offline_0019"}
+{"prompt": "Summarize the pros and cons of unit tests vs integration tests.", "id": "offline_0020"}
+{"prompt": "Propose a small project to practice Python packaging.", "id": "offline_0021"}
+{"prompt": "Explain why logging is important for ML training and evaluation.", "id": "offline_0022"}
+{"prompt": "Draft a concise README section describing how to run tests locally.", "id": "offline_0023"}
+{"prompt": "Explain what 'off-support exploitation' could mean in RLHF.", "id": "offline_0024"}
+{"prompt": "Give an example of a metric that looks good but is misleading, and why.", "id": "offline_0025"}
+{"prompt": "Write a short user story for an evaluation dashboard feature.", "id": "offline_0026"}
+{"prompt": "Suggest a weekly routine for consistent study without burnout.", "id": "offline_0027"}
+{"prompt": "Explain what 'online' vs 'offline' evaluation means for RLHF.", "id": "offline_0028"}
+{"prompt": "Explain the difference between a proxy metric and a target objective.", "id": "offline_0029"}
+{"prompt": "Explain what a 'reference policy' is in PPO-style RLHF.", "id": "offline_0030"}
+{"prompt": "Describe common failure modes when training with a fixed reward model.", "id": "offline_0031"}
+{"prompt": "Explain why 'negative KL' can appear with sampled estimators and what to do about it.", "id": "offline_0032"}
+{"prompt": "Describe what it means to make a report self-auditable.", "id": "offline_0033"}
+{"prompt": "Write guidelines for when a report cell should be 'N/A' vs numeric.", "id": "offline_0034"}
+{"prompt": "Explain what 'tail risk' means and why we might care about tail variance.", "id": "offline_0035"}
+{"prompt": "Give a short, neutral explanation of why safety evaluation can be dataset-dependent.", "id": "offline_0036"}
+{"prompt": "Explain what 'prompt injection' means in the context of model behavior.", "id": "offline_0037"}
+{"prompt": "Suggest a small set of prompts to evaluate refusal behavior without being adversarial.", "id": "offline_0038"}
+{"prompt": "Write a polite response to an unreasonable user request, staying helpful.", "id": "offline_0039"}
+{"prompt": "Explain what a 'judge model' might do in evaluation, and its limitations.", "id": "offline_0040"}
+{"prompt": "Explain why win-rate can disagree with reward averages.", "id": "offline_0041"}
+{"prompt": "Explain what 'calibration' could mean for reward signals.", "id": "offline_0042"}
+{"prompt": "Describe how you would compare two training methods fairly.", "id": "offline_0043"}
+{"prompt": "Describe what it means for an experiment to be 'well-controlled'.", "id": "offline_0044"}
+{"prompt": "Explain why latency should be measured and where measurement can go wrong.", "id": "offline_0045"}
+{"prompt": "Give a short plan to add a new metric end-to-end (artifacts -> aggregate -> report).", "id": "offline_0046"}
+{"prompt": "Explain what a 'sanity tier' is and why it's valuable in OSS.", "id": "offline_0047"}
+{"prompt": "Explain how to choose a minimal but stable test dataset for CI.", "id": "offline_0048"}
+{"prompt": "Write a short note to future maintainers about avoiding generated-file commits.", "id": "offline_0049"}
+{"prompt": "Explain the purpose of provenance fields (backend/model/tokenizer/config/git/seed).", "id": "offline_0050"}
+{"prompt": "Describe a simple way to detect if training actually updated parameters.", "id": "offline_0051"}
+{"prompt": "Explain how to audit 'distribution moved' even if outputs look unchanged.", "id": "offline_0052"}
+{"prompt": "Give an example of how sampling variance can dominate metrics on tiny datasets.", "id": "offline_0053"}
+{"prompt": "Explain why method-by-method isolation matters in training/eval pipelines.", "id": "offline_0054"}
+{"prompt": "Explain what 'N/A by design' means and why it differs from missing data.", "id": "offline_0055"}
+{"prompt": "Explain the difference between a signed logprob delta and an absolute proxy.", "id": "offline_0056"}
+{"prompt": "Explain why tables should avoid empty cells in reproducible reporting.", "id": "offline_0057"}
+{"prompt": "Describe a policy for choosing max_new_tokens for fast but meaningful tests.", "id": "offline_0058"}
+{"prompt": "Explain what an ablation study is and why it's important.", "id": "offline_0059"}
+{"prompt": "Suggest how to expand this prompt set while keeping it offline-safe and stable.", "id": "offline_0060"}
+{"prompt": "Explain the difference between model quality and evaluation harness reliability.", "id": "offline_0061"}
+{"prompt": "Give a short plan to run multi-seed evaluation and summarize results.", "id": "offline_0062"}
