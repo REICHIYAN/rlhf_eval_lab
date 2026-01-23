@@ -179,6 +179,7 @@ PPO ratio diagnostics (when emitted) are computed on per-token mean logprobs:
 This repo **bundles a tiny offline prompt set** used for deterministic, offline E2E runs:
 
 * `test_data/offline_prompts_small.jsonl` (63 prompts)
+* `offline_hh_small preset subsamples to 32 prompts by default for CI speed.`
 
 A preset is provided:
 
