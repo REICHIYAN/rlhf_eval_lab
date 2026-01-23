@@ -22,7 +22,7 @@ rlhf-lab validate
 rlhf-lab report
 ```
 
-The generated Markdown report must satisfy **all invariants**:
+The generated report must satisfy **all invariants**:
 
 * Table 1 / Table 2‑A / Table 2‑B / Table 2‑C are always present
 * **No empty cells**
@@ -31,7 +31,7 @@ The generated Markdown report must satisfy **all invariants**:
 
 ---
 
-## Level‑C Research Phase (Active)
+## Two-branch policy
 
 * The DoD layer is preserved on:
 
@@ -60,9 +60,7 @@ pip install -e .
 ### Layer 2 — Level‑C Research (HF backend)
 
 * Requires Hugging Face dependencies (`transformers`)
-* Used only when you explicitly request it:
-
-  * `--backend hf`
+* Used only when explicitly requested (`--backend hf`)
 
 ```bash
 pip install -r requirements-hf.txt
@@ -75,45 +73,43 @@ pip install -e .
 
 ## Algorithms (Methods)
 
-This project evaluates RLHF-style methods through a common **ArtifactsV1** schema, ensuring the pipeline is comparable and auditable.
+This project evaluates RLHF-style methods through a common **ArtifactsV1** schema, ensuring results are comparable and auditable.
 
 ### Implemented in DoD (fallback backend)
 
-The fallback backend runs minimal, deterministic “sanity-tier” implementations that are sufficient to:
+The fallback backend runs minimal, deterministic **sanity-tier** implementations that are sufficient to:
 
 * run end-to-end on CPU/CI
 * produce artifacts
 * compute metrics
 * generate fully populated tables
 
-Method keys are defined in **SSOT**:
+Method keys are defined in the SSOT:
 
 * `rlhf_eval_lab/registry/methods.py`
 
-Typical method families:
+Typical families:
 
 * **SFT** (`sft`)
-
-  * Teacher forcing on prompt+completion sequences.
 * **PPO family (sanity-tier in DoD)**
 
   * `ppo_standard`, `kl_ppo_fixed`, `kl_ppo_adaptive`, `safe_ppo`, `adaptive_rm_ppo`
-* **Preference-based methods (plumbing in DoD / expanded in Level‑C)**
+* **Preference-based methods (plumbing in DoD; expanded in Level‑C)**
 
-  * Keys vary by registry; these are required to still produce artifacts + report (no empty cells).
+  * Must still produce artifacts + report (no empty cells), even if training is a placeholder.
 
 ### HF backend policy (research layer)
 
 The `hf` backend is optional and is designed to evolve toward paper-grade training.
 
 * **HF Step1 (generation-only):** methods may run `generate → evaluate → artifacts`, with training explicitly marked as skipped.
-* **HF Step2 (minimal training enabled):** currently **SFT** can run minimal training when enabled.
+* **HF Step2 (minimal training enabled):** minimal training is enabled only when explicitly implemented/configured.
 
 Auditability is enforced per method via `ArtifactsV1.extra`:
 
 * `extra.skipped`: `true|false`
 * `extra.skip_reason`: e.g. `"hf_step1_generation_only"` or `""`
-* `extra.steps`: executed training steps (if any)
+* `extra.steps`: executed training steps (0 if no training)
 
 This ensures that **every artifact makes the execution mode explicit**.
 
@@ -123,7 +119,7 @@ This ensures that **every artifact makes the execution mode explicit**.
 
 All metrics are computed by `rlhf_eval_lab/eval/` (single source of truth) and reported through `reports/report.md`.
 
-Metric policy (including column-level `N/A`) is defined in **SSOT**:
+Metric policy (including column-level `N/A`) is defined in the SSOT:
 
 * `rlhf_eval_lab/registry/metrics.py`
 
@@ -134,62 +130,71 @@ Metric policy (including column-level `N/A`) is defined in **SSOT**:
 
 ### Core metrics (Table 1)
 
-* **Off-support ↓**
-
-  * Degree to which generations move outside the support of the dataset / reward signal.
-* **Tail Var ↓**
-
-  * Variance of the reward tail (e.g., top 1%); lower implies fewer extreme spikes.
-* **On-support ↑**
-
-  * Average reward within the supported region.
-* **Judge ↑**
-
-  * External judge score (optional; may be `N/A` depending on configuration).
-* **Win-rate ↑**
-
-  * Pairwise win rate (preference-style comparison; may be `N/A` depending on method).
-* **KL ↓**
-
-  * Divergence from the reference policy (policy drift). For PPO-family, this is defined against a reference snapshot per implementation.
+* **Off-support ↓**: degree to which generations move outside the support of the dataset / reward signal.
+* **Tail Var ↓**: variance of the reward tail (e.g. top 1%); lower implies fewer extreme spikes.
+* **On-support ↑**: average reward within the supported region.
+* **Judge ↑**: external judge score (optional; may be `N/A`).
+* **Win-rate ↑**: pairwise win rate (optional; may be `N/A`).
+* **KL ↓**: divergence from a reference policy (policy drift).
 
 ### Table 2 blocks
 
-* **Table 2‑A (PPO-family diagnostics)**
-
-  * Meaningful only for PPO-family methods; others are `N/A`.
-* **Table 2‑B (Preference-based diagnostics)**
-
-  * Meaningful only for preference / active-learning methods; others are `N/A`.
-* **Table 2‑C (Safety / robustness)**
-
-  * Safety-oriented diagnostics (may be `N/A` depending on dataset/method).
+* **Table 2‑A (PPO-family diagnostics)**: meaningful only for PPO-family methods; others are `N/A`.
+* **Table 2‑B (Preference-based diagnostics)**: meaningful only for preference/active methods; others are `N/A`.
+* **Table 2‑C (Safety / robustness)**: safety-oriented diagnostics (may be `N/A` depending on dataset/method).
 
 ### `N/A` policy
 
-`N/A` is **not missing**: it means the metric is **not applicable** to that method by design. Applicability is enforced by registry policy (column-level rules) and validated by `rlhf-lab validate`.
+`N/A` is **not missing**: it means the metric is **not applicable** to that method by design.
+Applicability is enforced by registry policy (column-level rules) and validated by `rlhf-lab validate`.
 
 ---
 
-## Datasets (Level‑C Research)
+## HF: KL & PPO audit diagnostics (proxy semantics)
 
-Level‑C research targets these datasets:
+For `backend=hf`, KL-related values shown in reports are **audit-oriented proxies** derived from sampled trajectory log-probabilities (token-mean), not the full-distribution KL.
 
-* **Preference learning:** HH‑RLHF
-* **Safety / stress evaluation:** HarmBench
+* `kl`: preferred **non-negative proxy** used for reporting stability
 
-### Data is not bundled
+  * `kl = E[ | logp_post - logp_ref | ]` (token-mean)
+* `kl_ref_sq`: squared-difference proxy for drift magnitude
 
-This repository **does not bundle** HH‑RLHF / HarmBench datasets.
+  * `kl_ref_sq = E[ (logp_post - logp_ref)^2 ]` (token-mean)
+* `kl_ref` / `kl_ref_pre`: signed mean differences kept for debugging (can be negative)
 
-Paper presets assume **local JSONL files** placed under `data/` (which is ignored by git).
+  * `kl_ref = E[ logp_post - logp_ref ]`, `kl_ref_pre = E[ logp_pre - logp_ref ]`
 
-Dataset placement:
+PPO ratio diagnostics (when emitted) are computed on per-token mean logprobs:
+
+* `ratio_mean_pre`: pre-update `E[ exp(logp_pre - logp_old) ]` (typically ≈ 1)
+* `ratio_mean`: post-update `E[ exp(logp_post - logp_old) ]`
+* `clipfrac`: fraction of samples where post-update ratio is outside `[1-clip, 1+clip]`
+
+---
+
+## Datasets
+
+### 1) Built-in offline dataset for wiring (bundled)
+
+This repo **bundles a tiny offline prompt set** used for deterministic, offline E2E runs:
+
+* `test_data/offline_prompts_small.jsonl` (63 prompts)
+
+A preset is provided:
+
+* `rlhf_eval_lab/config/presets/offline_hh_small.yaml`
+
+This is the recommended starting point for **“reasonable” method-to-method comparison** in the DoD layer (still sanity-tier, but less degenerate than ultra-tiny prompt sets).
+
+### 2) Real research datasets (not bundled)
+
+This repository **does not bundle** HH‑RLHF / HarmBench.
+Paper presets assume **local JSONL files** placed under `data/` (ignored by git).
+
+Suggested placement:
 
 * `data/hh_rlhf.jsonl`
 * `data/harmbench.jsonl`
-
-(`data/*.jsonl` is ignored by `.gitignore`.)
 
 ### Dataset reproducibility (SSOT)
 
@@ -204,54 +209,43 @@ Preset-controlled fields that determine the dataset slice:
 * `subsample_n`
 * `seed`
 
-These values are intended to make runs **auditable and reproducible** even when data is not bundled.
-
 ---
 
-## HarmBench Usage Policy
+## HarmBench usage policy
 
 HarmBench is used **strictly for evaluation** and **never for training**.
 
-* This project’s default reports are designed to be **safe to share**: they contain **aggregated metrics**, not a curated dataset of harmful content.
-* **Note (current behavior):** artifacts are an evaluation SSOT and may include prompts/completions depending on your local dataset inputs and configuration.
+* Default reports are designed to be **safe to share**: they contain aggregated metrics, not a curated dataset.
+* Artifacts may contain prompts/completions depending on your local dataset inputs and configuration.
 
   * Treat `data/harmbench.jsonl` and generated artifacts as **sensitive local data**.
-  * If you plan to distribute artifacts, you must apply appropriate redaction.
+  * If you plan to distribute artifacts, apply appropriate redaction.
 
 ---
 
 ## Quickstart (DoD)
 
-### 1) Run (fallback backend, torch-only)
+### 1) Offline E2E (recommended)
+
+Runs fully offline on CPU/CI and is stable enough to compare methods at a basic sanity tier.
+
+```bash
+rlhf-lab run --backend fallback --preset offline_hh_small --seed 0
+rlhf-lab report
+rlhf-lab validate
+```
+
+### 2) Default DoD smoke run
 
 ```bash
 rlhf-lab run --backend fallback --seed 0
+rlhf-lab report
+rlhf-lab validate
 ```
 
 Outputs:
 
 * `artifacts/<method_key>/seed_<seed>.json`
-
-### 2) Validate (OSS gate)
-
-```bash
-rlhf-lab validate
-```
-
-Validation guarantees:
-
-* no missing metrics per method
-* no empty cells in downstream tables
-* `N/A` appears **only** where allowed by column policy
-
-### 3) Report (Markdown tables)
-
-```bash
-rlhf-lab report
-```
-
-Outputs:
-
 * `reports/report.md`
 
 ---
@@ -265,50 +259,35 @@ pip install -r requirements-hf.txt
 pip install -e .
 ```
 
-### 2) Run paper preset (example: HH‑RLHF)
-
-Put the dataset file at `data/hh_rlhf.jsonl`, then:
+### 2) Run an HF preset (example)
 
 ```bash
 rlhf-lab run --backend hf --preset paper_hh --seed 0
 rlhf-lab report
-rlhf-lab validate --report reports
+rlhf-lab validate
 ```
 
-### 3) Run paper preset (example: HarmBench)
+---
 
-Put the dataset file at `data/harmbench.jsonl`, then:
+## Testing
+
+### Run DoD regression tests (CI-equivalent)
 
 ```bash
-rlhf-lab run --backend hf --preset paper_harmbench --seed 0
-rlhf-lab report
-rlhf-lab validate --report reports
+pytest -q
 ```
 
-**SFT minimal training (HF Step2):**
+### Optional HF E2E test (explicit opt-in)
 
-* `paper_hh` / `paper_harmbench` can enable minimal SFT via `train.hf_sft_steps`.
-* When enabled, `ArtifactsV1.extra.skipped` is `false` for `sft` and `extra.steps` is set.
+HF tests are intentionally **opt-in** so CI remains fast and offline-safe.
 
----
-
-## Backends
-
-### `fallback` (default, DoD)
-
-* `torch` only
-* deterministic tokenizer + GRU tiny language model
-* designed to run on CPU and in CI **without `transformers`**
-
-### `hf` (research phase)
-
-* Hugging Face backend
-* optional dependency via `requirements-hf.txt`
-* used **only** when explicitly requested (`--backend hf`)
+```bash
+RUN_HF_TESTS=1 pytest -q tests/integration/test_hf_e2e_optional.py
+```
 
 ---
 
-## Project Structure (High Level)
+## Project structure (high level)
 
 * `rlhf_eval_lab/cli/` — CLI entrypoints (`run`, `validate`, `report`)
 * `rlhf_eval_lab/backends/` — backend implementations (`fallback`, `hf`)
@@ -316,41 +295,23 @@ rlhf-lab validate --report reports
 * `rlhf_eval_lab/registry/` — method + metric specifications (column `N/A` policy)
 * `rlhf_eval_lab/reporting/` — artifacts, aggregation, Markdown report generation
 * `tests/` — unit/integration tests (DoD gate)
-* `test_data/` — minimal sample JSONL for dataset wiring
+* `test_data/` — bundled offline JSONL for deterministic dataset wiring
 
 ---
 
-## Phase‑C Tracker (Level‑C)
+## Roadmap (short)
 
-| Item    | Goal (what we must implement / freeze)                                                                  | Status             | Evidence (from your logs)                                                                           | Shortest remaining work                                                                                                                 | Remaining est. |
-| ------- | ------------------------------------------------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------: |
-| **C1**  | HF PPO‑RLHF (Standard) minimal‑correct (ratio‑clip + ref fixed + post‑train generations saved)          | **Not started**    | HF training exists only for SFT; PPO‑family on HF still emits `steps=0` placeholders                | Implement **one** HF PPO update step + post‑update `generate` saved to artifacts; end‑to‑end `run→report→validate` with `skipped=False` |             12 |
-| **C2**  | HF KL‑PPO (fixed β)                                                                                     | **Not started**    | depends on C1                                                                                       | Add KL penalty with SSOT KL(π vs ref) definition + fixed β in presets + provenance                                                      |              4 |
-| **C3**  | HF KL‑PPO (adaptive / target‑KL)                                                                        | **Not started**    | depends on C1/C2                                                                                    | Minimal PI/proportional β controller + preset defaults + provenance                                                                     |              5 |
-| **C4**  | HF Safe PPO (penalty / update‑scale decay; no hard filter)                                              | **Not started**    | depends on C1/C2                                                                                    | Add safety penalty or update scaling + connect to HarmBench eval                                                                        |              4 |
-| **C5**  | Metrics fixed at “paper‑definable” level and computable on HF (Off‑support / TailVar / On‑support / KL) | **Partial**        | `rlhf-lab run(hf) → report → validate` succeeds (pipeline wired)                                    | Freeze exact definitions (and thresholds) in code + in report Interpretation; if proxy, name it as proxy                                |            6–8 |
-| **C6**  | HH‑RLHF usable as input (local jsonl + optional HF datasets) with split/seed/subsample frozen           | **Mostly done**    | `dataset=hh_rlhf:train:local ... hash=...` printed; paper preset exists                             | Optional: HF datasets source support; document split/subsample/seed semantics as SSOT                                                   |            3–6 |
-| **C7**  | HarmBench usable as input (loader + eval) with safety policy documented                                 | **Partial (thin)** | paper preset exists; wiring in place                                                                | Confirm loader/schema for real HarmBench JSONL; tighten safety notes; ensure report doesn’t encourage misuse                            |            6–8 |
-| **C8**  | PPO‑family outputs integrated into ArtifactsV1 (SSOT) and tables remain fully populated                 | **Partial**        | HF SFT now runs with training steps; report/validate succeed                                        | Once C1 exists, ensure PPO/KL/Safe all save post‑train completions + diagnostics; keep N/A policy strict                                |            4–6 |
-| **C9**  | Paper presets + “real data path” workflow frozen                                                        | **Done**           | `paper_hh`/`paper_harmbench` presets + `hf_sft_steps` + HF logs stable (loss_type warning silenced) | (only docs polish if desired)                                                                                                           |              0 |
-| **C10** | HF optional tests + machine verification of “no empty cells”                                            | **Not started**    | no HF E2E test yet                                                                                  | Add one pytest integration test that skips if `transformers` missing; runs `run→report→validate` on tiny JSONL                          |              5 |
-| **C11** | Report Interpretation finalized for Phase‑C (definitions, ↑↓, N/A, support/ref assumptions)             | **Partial**        | Interpretation exists, but Phase‑C/HF definitions not fully frozen                                  | Update report header template to include dataset_hash semantics + HF Step1/2 semantics + metric definitions                             |            1–2 |
+### Reliability track (DoD)
 
----
+* ✅ Bundled offline dataset + preset + E2E integration test (`offline_hh_small`)
+* ⏳ README polish (keep SSOT consistent with code + report interpretation)
+* ⏳ Release ritual (CHANGELOG, version pin, tag)
 
-## Development
+### Research track (Level‑C)
 
-### Run end-to-end regression tests
-
-```bash
-pytest -q
-```
-
-### Clean generated outputs
-
-```bash
-rm -rf artifacts reports
-```
+* ✅ HF audit semantics documented (KL proxy + PPO ratio diagnostics)
+* ✅ HF optional E2E test exists (opt-in)
+* ⏳ Expand HF training coverage (KL‑PPO fixed/adaptive, Safe PPO) while preserving DoD invariants
 
 ---
 
