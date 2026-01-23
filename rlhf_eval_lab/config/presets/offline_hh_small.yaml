@@ -3,8 +3,8 @@ dataset:
   split: train
   source: local
   path: test_data/offline_prompts_small.jsonl
-  prompt_key: prompt
-  max_prompts: 32
+  subsample_n: 32
+  seed: 0
 
 eval:
   max_new_tokens: 16

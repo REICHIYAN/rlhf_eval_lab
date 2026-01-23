@@ -1,17 +1,15 @@
-# rlhf_eval_lab/config/defaults.yaml
-# 全ハイパラ・閾値はここ（SSOT）
-# tiny_lm.arch は gru 固定（将来拡張は設計上の余地のみ）
-
 tiny_lm:
   arch: gru
-  emb_dim: 64
-  hidden_dim: 128
+  vocab_size: 512
+  emb_dim: 32
+  hidden_dim: 64
   num_layers: 1
-  max_seq_len: 128
+  max_seq_len: 64
 
 train:
   grad_clip: 1.0
   sanity_adv_scale: 10.0
+  sanity_ppo_steps: 2
   lr: 1e-3
   hf_sft_steps: 0
   hf_max_seq_len: 256
@@ -28,4 +26,3 @@ ppo:
 hf:
   model_name: gpt2
   temperature: 1.0
-

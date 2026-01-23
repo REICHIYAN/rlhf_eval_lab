@@ -1,15 +1,15 @@
-# rlhf_eval_lab/config/presets/fallback_tiny.yaml
-# fallback（torchのみ）用：軽量・確実に回る設定
-
 tiny_lm:
   arch: gru
-  emb_dim: 64
-  hidden_dim: 128
+  vocab_size: 512
+  emb_dim: 32
+  hidden_dim: 64
   num_layers: 1
+  max_seq_len: 64
 
 train:
-  lr: 0.001
+  lr: 1e-3
   grad_clip: 1.0
+  sanity_ppo_steps: 2
 
 eval:
   max_new_tokens: 16
