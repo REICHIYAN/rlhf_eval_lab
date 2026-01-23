@@ -24,6 +24,15 @@ jobs:
           python -m pip install -e .
           python -m pip install pytest
 
+      - name: DoD E2E (fallback offline)
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          rm -rf artifacts reports
+          rlhf-lab run --backend fallback --preset offline_hh_small --seed 0
+          rlhf-lab validate
+          rlhf-lab report
+
       - name: Run tests (fallback-only)
         env:
           PYTHONUNBUFFERED: "1"
