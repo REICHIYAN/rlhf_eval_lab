@@ -110,3 +110,36 @@ def test_hf_e2e_optional_run_report_validate() -> None:
     assert ratio_post == ratio_post  # not NaN
     assert ratio_post != float("inf")
     assert ratio_post != float("-inf")
+
+def test_hf_kl_ppo_fixed_minimal_training_optional(tmp_path, monkeypatch):
+    import os
+    import json
+    import subprocess
+    import sys
+
+    if os.environ.get("RUN_HF_TESTS") != "1":
+        import pytest
+        pytest.skip("HF optional test is disabled (set RUN_HF_TESTS=1)")
+
+    # Ensure we run from repo root
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    os.chdir(repo_root)
+
+    # Clean outputs
+    subprocess.check_call(["rm", "-rf", "artifacts", "reports"])
+
+    # Run HF preset (minimal training for kl_ppo_fixed)
+    subprocess.check_call(
+        ["rlhf-lab", "run", "--backend", "hf", "--preset", "hf_offline_klppo_fixed", "--seed", "0"],
+        env=dict(os.environ, PYTHONUNBUFFERED="1"),
+    )
+    subprocess.check_call(["rlhf-lab", "validate"], env=dict(os.environ, PYTHONUNBUFFERED="1"))
+    subprocess.check_call(["rlhf-lab", "report"], env=dict(os.environ, PYTHONUNBUFFERED="1"))
+
+    # Verify auditability: training actually executed
+    p = os.path.join("artifacts", "kl_ppo_fixed", "seed_0.json")
+    with open(p, "r", encoding="utf-8") as f:
+        d = json.load(f)
+    extra = d.get("extra", {})
+    assert extra.get("skipped") is False
+    assert int(extra.get("steps", 0)) >= 1
