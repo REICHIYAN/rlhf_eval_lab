@@ -4,8 +4,9 @@ import json
 import os
 import shutil
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterator, Mapping
 
 import pytest
 
@@ -22,124 +23,177 @@ def _rm(path: str) -> None:
 
 def _load_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+        d = json.load(f)
+    if not isinstance(d, dict):
+        raise AssertionError(f"Expected JSON object at {path}, got {type(d)}")
+    return d
+
+
+def _repo_root() -> Path:
+    # tests/integration/test_hf_e2e_optional.py -> repo root is parents[2]
+    return Path(__file__).resolve().parents[2]
+
+
+@contextmanager
+def _chdir(path: Path) -> Iterator[None]:
+    prev = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(prev)
+
+
+def _hf_tests_enabled() -> bool:
+    return os.environ.get("RUN_HF_TESTS", "").strip() == "1"
+
+
+def _run(cmd: list[str], *, env: Mapping[str, str] | None = None) -> None:
+    subprocess.run(cmd, check=True, env=env)
+
+
+def _env_unbuffered() -> Dict[str, str]:
+    e = dict(os.environ)
+    e["PYTHONUNBUFFERED"] = "1"
+    # optional: reduce noisy tokenizer parallel warnings
+    e.setdefault("TOKENIZERS_PARALLELISM", "false")
+    return e
+
+
+def _require_hf_optional() -> None:
+    # (a) skip if transformers not installed
+    pytest.importorskip("transformers")
+    # (b) skip unless explicitly enabled
+    if not _hf_tests_enabled():
+        pytest.skip("HF optional test disabled (set RUN_HF_TESTS=1 to enable).")
 
 
 @pytest.mark.integration
-def test_hf_e2e_optional_run_report_validate() -> None:
+def test_hf_offline_kl_ppo_fixed_e2e_optional() -> None:
     """
-    HF optional E2E: run -> report -> validate
+    HF optional E2E (offline/bundled): run -> validate -> report
 
-    - Skips by default (so fallback-only CI stays fast and offline-safe)
+    - Skips by default (fallback-only CI stays fast and offline-safe)
     - Runs only when:
         (a) transformers is installed, AND
-        (b) RUN_HF_TESTS=1 is set
+        (b) RUN_HF_TESTS=1
 
-    Additional invariants (C1.8):
-    - PPO diagnostics must be *post-update* and auditable.
-    - KL proxy diagnostics must be nonnegative (kl_ref_abs, kl_ref_sq).
-    - run pipeline must prefer kl_ref_abs as "kl" for HF PPO.
+    Audit invariants:
+    - PPO training actually executed (skipped=False, steps>=1).
+    - PPO diagnostics exist and are finite.
+    - KL proxies are nonnegative (kl_ref_abs, kl_ref_sq).
+    - run pipeline prefers kl_ref_abs as extra["kl"] (HF PPO reporting policy).
     """
-    # (a) skip if transformers not installed
-    pytest.importorskip("transformers")
+    _require_hf_optional()
 
-    # (b) skip unless explicitly enabled
-    if os.environ.get("RUN_HF_TESTS", "").strip() != "1":
-        pytest.skip("HF optional test disabled (set RUN_HF_TESTS=1 to enable).")
+    root = _repo_root()
+    with _chdir(root):
+        # Clean outputs to avoid cross-test contamination
+        _rm("artifacts")
+        _rm("reports")
 
-    # Clean outputs to avoid cross-test contamination
-    _rm("artifacts")
-    _rm("reports")
+        env = _env_unbuffered()
 
-    # Run HF preset (paper_hh_ppo) end-to-end
-    subprocess.run(
-        ["rlhf-lab", "run", "--backend", "hf", "--preset", "paper_hh_ppo", "--seed", "0"],
-        check=True,
-    )
-    subprocess.run(["rlhf-lab", "report"], check=True)
-    subprocess.run(["rlhf-lab", "validate"], check=True)
+        # Offline preset: bundled prompts + minimal PPO for kl_ppo_fixed
+        _run(
+            ["rlhf-lab", "run", "--backend", "hf", "--preset", "hf_offline_klppo_fixed", "--seed", "0"],
+            env=env,
+        )
+        _run(["rlhf-lab", "validate"], env=env)
+        _run(["rlhf-lab", "report"], env=env)
 
-    # Assert report exists (basic sanity)
-    report_path = Path("reports/report.md")
-    assert report_path.exists()
+        report_path = Path("reports/report.md")
+        assert report_path.exists(), "Expected reports/report.md to be generated"
 
-    # ---- Audit invariants for HF PPO diagnostics ----
-    art_path = Path("artifacts/ppo_standard/seed_0.json")
-    assert art_path.exists(), f"Expected artifacts missing: {art_path}"
+        art_path = Path("artifacts/kl_ppo_fixed/seed_0.json")
+        assert art_path.exists(), f"Expected artifacts missing: {art_path}"
 
-    art = _load_json(art_path)
-    extra = (art.get("extra") or {})  # type: ignore[assignment]
-    assert isinstance(extra, dict), "Artifacts extra must be a dict"
+        art = _load_json(art_path)
+        extra_any = art.get("extra") or {}
+        assert isinstance(extra_any, dict), "Artifacts extra must be a dict"
+        extra: Dict[str, Any] = extra_any
 
-    # PPO should be executed (paper_hh_ppo enables hf_ppo_steps)
-    assert extra.get("skipped") is False
-    assert extra.get("steps") is not None and int(extra["steps"]) > 0  # type: ignore[index]
+        # PPO should be executed
+        assert extra.get("skipped") is False
+        assert int(extra.get("steps", 0)) >= 1
 
-    # Required keys for post-update diagnostics
-    required = [
-        "ratio_mean_pre",
-        "ratio_mean",
-        "kl_ref_pre",
-        "kl_ref",
-        "kl_ref_abs",
-        "kl_ref_sq",
-        "clipfrac",
-        "ppo_loss",
-        "kl",
-    ]
-    missing = [k for k in required if k not in extra]
-    assert not missing, f"Missing required PPO diagnostics keys: {missing}"
+        required = [
+            "ratio_mean_pre",
+            "ratio_mean",
+            "kl_ref_pre",
+            "kl_ref",
+            "kl_ref_abs",
+            "kl_ref_sq",
+            "clipfrac",
+            "ppo_loss",
+            "kl",
+        ]
+        missing = [k for k in required if k not in extra]
+        assert not missing, f"Missing required PPO diagnostics keys: {missing}"
 
-    ratio_pre = float(extra["ratio_mean_pre"])
-    ratio_post = float(extra["ratio_mean"])
-    kl_abs = float(extra["kl_ref_abs"])
-    kl_sq = float(extra["kl_ref_sq"])
-    kl = float(extra["kl"])
+        ratio_pre = float(extra["ratio_mean_pre"])
+        ratio_post = float(extra["ratio_mean"])
+        kl_abs = float(extra["kl_ref_abs"])
+        kl_sq = float(extra["kl_ref_sq"])
+        kl = float(extra["kl"])
 
-    # Pre-update ratio should be ~1 (same params, dropout disabled)
-    assert ratio_pre == pytest.approx(1.0, abs=1e-6)
+        # Pre-update ratio should be ~1 (same params)
+        assert ratio_pre == pytest.approx(1.0, abs=1e-6)
 
-    # Nonnegative KL proxies (no sign confusion in report interpretation)
-    assert kl_abs >= 0.0
-    assert kl_sq >= 0.0
+        # Nonnegative KL proxies
+        assert kl_abs >= 0.0
+        assert kl_sq >= 0.0
 
-    # Run pipeline policy: prefer abs proxy as "kl" for HF PPO
-    assert kl == pytest.approx(kl_abs, abs=1e-12)
+        # Reporting policy: prefer abs proxy as "kl"
+        assert kl == pytest.approx(kl_abs, abs=1e-12)
 
-    # Sanity: ratio_post is a diagnostic, should be finite
-    assert ratio_post == ratio_post  # not NaN
-    assert ratio_post != float("inf")
-    assert ratio_post != float("-inf")
+        # Sanity: ratio_post should be finite (not NaN/Inf)
+        assert ratio_post == ratio_post  # not NaN
+        assert ratio_post not in (float("inf"), float("-inf"))
 
-def test_hf_kl_ppo_fixed_minimal_training_optional(tmp_path, monkeypatch):
-    import os
-    import json
-    import subprocess
-    import sys
 
-    if os.environ.get("RUN_HF_TESTS") != "1":
-        import pytest
-        pytest.skip("HF optional test is disabled (set RUN_HF_TESTS=1)")
+@pytest.mark.integration
+def test_hf_offline_kl_ppo_adaptive_beta_updates_optional() -> None:
+    """
+    HF optional E2E (offline/bundled): KL-PPO adaptive must update beta and stamp it into extra.
 
-    # Ensure we run from repo root
-    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    os.chdir(repo_root)
+    DoD (for this test):
+    - skipped=False, steps>=1
+    - beta_pre/beta_post/kl_target/kl_measured/beta_lr/beta_clip exist
+    - beta_pre != beta_post (update happened)
+    """
+    _require_hf_optional()
 
-    # Clean outputs
-    subprocess.check_call(["rm", "-rf", "artifacts", "reports"])
+    root = _repo_root()
+    with _chdir(root):
+        _rm("artifacts")
+        _rm("reports")
 
-    # Run HF preset (minimal training for kl_ppo_fixed)
-    subprocess.check_call(
-        ["rlhf-lab", "run", "--backend", "hf", "--preset", "hf_offline_klppo_fixed", "--seed", "0"],
-        env=dict(os.environ, PYTHONUNBUFFERED="1"),
-    )
-    subprocess.check_call(["rlhf-lab", "validate"], env=dict(os.environ, PYTHONUNBUFFERED="1"))
-    subprocess.check_call(["rlhf-lab", "report"], env=dict(os.environ, PYTHONUNBUFFERED="1"))
+        env = _env_unbuffered()
 
-    # Verify auditability: training actually executed
-    p = os.path.join("artifacts", "kl_ppo_fixed", "seed_0.json")
-    with open(p, "r", encoding="utf-8") as f:
-        d = json.load(f)
-    extra = d.get("extra", {})
-    assert extra.get("skipped") is False
-    assert int(extra.get("steps", 0)) >= 1
+        _run(
+            ["rlhf-lab", "run", "--backend", "hf", "--preset", "hf_offline_klppo_adaptive", "--seed", "0"],
+            env=env,
+        )
+        _run(["rlhf-lab", "validate"], env=env)
+        _run(["rlhf-lab", "report"], env=env)
+
+        art_path = Path("artifacts/kl_ppo_adaptive/seed_0.json")
+        assert art_path.exists(), f"Expected artifacts missing: {art_path}"
+
+        art = _load_json(art_path)
+        extra_any = art.get("extra") or {}
+        assert isinstance(extra_any, dict), "Artifacts extra must be a dict"
+        extra: Dict[str, Any] = extra_any
+
+        assert extra.get("skipped") is False
+        assert int(extra.get("steps", 0)) >= 1
+
+        for k in ["beta_pre", "beta_post", "kl_target", "kl_measured", "beta_lr", "beta_clip"]:
+            assert k in extra, f"Missing adaptive audit key: {k}"
+
+        beta_pre = float(extra["beta_pre"])
+        beta_post = float(extra["beta_post"])
+
+        # Update must occur (even tiny, but non-identical)
+        assert beta_post != beta_pre, f"beta did not change: pre={beta_pre} post={beta_post}"

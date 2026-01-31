@@ -1,20 +1,8 @@
 # rlhf_eval_lab/cli/commands/run.py
-# 目的：
-# - 全手法を最低 1 step 回す（fallbackでは実測で backward->step）
-# - ArtifactsV1 を必ず吐く（空欄ゼロ設計の入力SSOT）
-# 注意：
-# - 研究最適化ではなく sanity tier（fallback）を最優先
-# - HF backend は optional なので遅延 import で守る（transformers未導入でも落とさない）
-# - Step1: HFは「生成→評価→artifacts」まで（学習なし）
-# - Step2: HFはSFTのみ最小で学習実行（train.hf_sft_steps > 0 のとき）
-# - Step3: HFは PPO を ppo_standard のみ最小で学習実行（train.hf_ppo_steps > 0 のとき）
-# - C8: PPO後に再generate→rewardし、pre/post差分をextraに刻む（学習が動いた証拠）
-# - C8+: PPOの「更新が本当に反映されたか」をパラメータchecksumで監査する
-# - C8++: 出力が変わらなくても「分布が動いた」を logprob delta で監査する（HFのみ）
-# - C1.6+: KLの見た目事故（符号）を避けるため、HFでは非負proxyを優先して extra["kl"] を埋める
 
 from __future__ import annotations
 
+import math
 import os
 import random
 from typing import Any, Dict, Iterable, Tuple
@@ -52,6 +40,17 @@ def _mean(xs: Iterable[float]) -> float:
     if not xs:
         return 0.0
     return float(sum(float(x) for x in xs) / len(xs))
+
+
+def _as_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None:
+            return float(default)
+        if hasattr(v, "item"):
+            return float(v.item())
+        return float(v)
+    except Exception:
+        return float(default)
 
 
 def _model_checksum(model: torch.nn.Module) -> Tuple[float, float]:
@@ -152,6 +151,76 @@ def _choose_nonneg_kl_proxy(extra: Dict[str, Any]) -> float:
     return 0.0
 
 
+def _kl_beta_adapt_update(
+    beta_pre: float,
+    ppo_out: Dict[str, Any],
+    train_cfg: Dict[str, Any],
+) -> Tuple[float, Dict[str, float]]:
+    """
+    Minimal, safe KL-beta adaptation rule (audit-first).
+
+    Update uses a bounded multiplicative rule:
+      ratio = kl_measured / kl_target
+      adj   = clip(ratio - 1, [-beta_clip, +beta_clip])
+      beta_post = clamp(beta_pre * exp(beta_lr * adj), [beta_min, beta_max])
+
+    Returns:
+      (beta_post, audit_fields)
+    """
+    beta_pre = _as_float(beta_pre, 0.0)
+
+    kl_target = _as_float(train_cfg.get("kl_target", 0.1), 0.1)
+    beta_lr = _as_float(train_cfg.get("kl_beta_lr", 0.1), 0.1)
+    beta_min = _as_float(train_cfg.get("kl_beta_min", 1e-5), 1e-5)
+    beta_max = _as_float(train_cfg.get("kl_beta_max", 100.0), 100.0)
+    beta_clip = abs(_as_float(train_cfg.get("kl_beta_clip", 0.2), 0.2))
+
+    # stable KL proxy preference: abs proxy > abs(signed) > sqrt(sq)
+    kl_measured = ppo_out.get("kl_ref_abs", None)
+    if kl_measured is None:
+        kl_measured = abs(_as_float(ppo_out.get("kl_ref", 0.0), 0.0))
+    else:
+        kl_measured = _as_float(kl_measured, 0.0)
+
+    if kl_measured == 0.0:
+        kl_measured = math.sqrt(max(_as_float(ppo_out.get("kl_ref_sq", 0.0), 0.0), 0.0))
+
+    # sanitize
+    eps = 1e-12
+    if (not math.isfinite(kl_target)) or (kl_target <= 0.0):
+        kl_target = 0.1
+    if (not math.isfinite(kl_measured)) or (kl_measured < 0.0):
+        kl_measured = 0.0
+
+    ratio = kl_measured / max(kl_target, eps)
+    if not math.isfinite(ratio):
+        ratio = 0.0
+
+    adj = ratio - 1.0
+    if beta_clip > 0.0:
+        adj = max(-beta_clip, min(beta_clip, adj))
+
+    beta_post = beta_pre * math.exp(beta_lr * adj)
+    if not math.isfinite(beta_post):
+        beta_post = beta_pre
+
+    beta_post = max(beta_min, min(beta_max, beta_post))
+
+    audit = {
+        "beta_pre": float(beta_pre),
+        "beta_post": float(beta_post),
+        "kl_target": float(kl_target),
+        "kl_measured": float(kl_measured),
+        "beta_lr": float(beta_lr),
+        "beta_clip": float(beta_clip),
+        "beta_min": float(beta_min),
+        "beta_max": float(beta_max),
+        "beta_ratio": float(ratio),
+        "beta_adj": float(adj),
+    }
+    return float(beta_post), audit
+
+
 def run_cmd(args) -> int:
     cfg = load_config(preset=args.preset, user_path=args.config)
     seed = int(args.seed)
@@ -211,6 +280,7 @@ def run_cmd(args) -> int:
     train_cfg = cfg.get("train", {}) or {}
     hf_sft_steps = int(train_cfg.get("hf_sft_steps", 0))
     hf_ppo_steps = int(train_cfg.get("hf_ppo_steps", 0))
+
     hf_ppo_method_keys_raw = train_cfg.get("hf_ppo_method_keys", None)
     if hf_ppo_method_keys_raw is None:
         hf_ppo_method_keys = {"ppo_standard"}
@@ -218,6 +288,7 @@ def run_cmd(args) -> int:
         hf_ppo_method_keys = {str(x) for x in hf_ppo_method_keys_raw}
     else:
         hf_ppo_method_keys = {str(hf_ppo_method_keys_raw)}
+
     ppo_clip = float(train_cfg.get("ppo_clip", 0.2))
     ppo_lr = float(train_cfg.get("ppo_lr", 1e-6))
     sft_lr = float(train_cfg.get("lr", 1e-3))
@@ -339,6 +410,9 @@ def run_cmd(args) -> int:
             rewards = list(ppo_base_rewards)
 
             kl_beta_eff = float(kl_beta_map.get(m.key, kl_beta_base))
+            if m.key == "kl_ppo_adaptive":
+                # allow presets to override initial beta (HF-focused, safe default)
+                kl_beta_eff = float(train_cfg.get("kl_beta_init", kl_beta_eff))
 
             if use_fallback_ppo:
                 backend.model.load_state_dict(ppo_policy_init_state)
@@ -374,7 +448,7 @@ def run_cmd(args) -> int:
                     f"ppo_out_keys={sorted(list(last_out.keys()))}"
                 )
             else:
-                # HF: enable minimal PPO ONLY for ppo_standard when explicitly requested.
+                # HF: enable minimal PPO for selected methods when explicitly requested.
                 extra["ppo_clip"] = float(ppo_clip)
                 extra["ppo_lr"] = float(ppo_lr)
 
@@ -388,6 +462,17 @@ def run_cmd(args) -> int:
                     "kl_ref_pre",
                     "kl_ref_abs",
                     "kl_ref_sq",
+                    # adaptive beta audit placeholders
+                    "beta_pre",
+                    "beta_post",
+                    "kl_target",
+                    "kl_measured",
+                    "beta_lr",
+                    "beta_clip",
+                    "beta_min",
+                    "beta_max",
+                    "beta_ratio",
+                    "beta_adj",
                 ):
                     extra.setdefault(k, 0.0)
 
@@ -405,16 +490,29 @@ def run_cmd(args) -> int:
                     abs_pre, sq_pre = _model_checksum(backend.model)
 
                     last_out: Dict[str, float] = {}
+
+                    beta_init = float(kl_beta_eff)
+                    beta_audit_last: Dict[str, float] = {}
+
                     for _ in range(int(hf_ppo_steps)):
+                        beta_pre = float(kl_beta_eff)
+
                         out = backend.ppo_step(
                             prompts=ppo_prompts,
                             completions=completions,
                             rewards=rewards,
-                            kl_beta=kl_beta_eff,
+                            kl_beta=beta_pre,
                             ref_state=None,
                             update_ref=False,
                         )
+
                         last_out = {k: float(v) for k, v in out.items()}
+
+                        # C2b: adaptive beta update (audit-first)
+                        if m.key == "kl_ppo_adaptive":
+                            beta_post, beta_audit = _kl_beta_adapt_update(beta_pre, out, train_cfg)
+                            kl_beta_eff = float(beta_post)
+                            beta_audit_last = beta_audit
 
                     abs_post, sq_post = _model_checksum(backend.model)
 
@@ -429,6 +527,11 @@ def run_cmd(args) -> int:
                     extra["kl_beta"] = float(kl_beta_eff)
                     extra["skipped"] = False
                     extra["skip_reason"] = ""
+
+                    # C2b: record beta audit fields (last step) + initial beta
+                    if m.key == "kl_ppo_adaptive":
+                        extra["beta_init"] = float(beta_init)
+                        extra.update({k: float(v) for k, v in beta_audit_last.items()})
 
                     # Parameter-change audit (C8+)
                     extra["param_abs_sum_pre"] = float(abs_pre)
