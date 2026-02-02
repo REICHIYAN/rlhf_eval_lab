@@ -46,6 +46,32 @@ def _is_na(x: Any) -> bool:
     return False
 
 
+def _as_bool(x: Any) -> bool:
+    if isinstance(x, bool):
+        return x
+    if isinstance(x, (int, float)):
+        try:
+            return bool(int(x))
+        except Exception:
+            return False
+    if isinstance(x, str):
+        return x.strip().lower() in {"1", "true", "yes", "y", "t"}
+    return False
+
+
+def _as_int(x: Any, default: int = 0) -> int:
+    try:
+        if x is None:
+            return int(default)
+        if isinstance(x, bool):
+            return int(x)
+        if hasattr(x, "item"):
+            return int(x.item())
+        return int(x)
+    except Exception:
+        return int(default)
+
+
 def _as_float(x: Any) -> Optional[float]:
     """
     Best-effort conversion to float.
@@ -61,6 +87,11 @@ def _as_float(x: Any) -> Optional[float]:
             return None
         try:
             return float(s)
+        except Exception:
+            return None
+    if hasattr(x, "item"):
+        try:
+            return float(x.item())
         except Exception:
             return None
     return None
@@ -95,14 +126,12 @@ def _compute_ppl_fallback(art: ArtifactsV1, out: Dict[str, Any]) -> float:
     _ = out  # reserved for future use
     extra = art.extra or {}
 
-    # If upstream gave us ppl directly, accept it if sane.
     ppl_direct = _finite_or_none(_as_float(extra.get("ppl")))
     if ppl_direct is not None:
         if ppl_direct <= 0:
             return 1.0
         return float(ppl_direct)
 
-    # Otherwise treat as NLL-like and exponentiate.
     nll_like = _as_float(extra.get("nll"))
     if nll_like is None:
         nll_like = _as_float(extra.get("mean_nll"))
@@ -110,12 +139,11 @@ def _compute_ppl_fallback(art: ArtifactsV1, out: Dict[str, Any]) -> float:
         nll_like = _as_float(extra.get("loss"))
 
     if nll_like is None or not math.isfinite(float(nll_like)):
-        # Absolute last resort: do not fail validate.
         nll_like = 0.0
 
     nll_like = float(nll_like)
     nll_like = max(nll_like, 1e-8)
-    nll_like = min(nll_like, 50.0)  # exp(50) is huge but finite
+    nll_like = min(nll_like, 50.0)
 
     ppl = float(math.exp(nll_like))
     if not math.isfinite(ppl) or ppl <= 0:
@@ -131,13 +159,25 @@ def evaluate_artifacts(art: ArtifactsV1) -> Dict[str, Any]:
     method = METHOD_BY_KEY[art.method_key]
     out: Dict[str, Any] = {}
 
+    extra = art.extra or {}
+
+    # ---------------------------------------------------------
+    # Global execution flags (audit SSOT)
+    # ---------------------------------------------------------
+    skipped = _as_bool(extra.get("skipped"))
+    steps = _as_int(extra.get("steps"), 0)
+    skip_reason = str(extra.get("skip_reason") or "").strip()
+    training_executed = (not skipped) and steps > 0
+
+    # Notes must exist per-seed (DoD). Prefer explicit skip_reason if skipped.
+    out["notes"] = "-" if not skipped else (skip_reason if skip_reason else "skipped")
+
     # --------------------------
     # Table 1 (core)
     # --------------------------
     off = compute_offsupport(art.prompts, art.completions)
     on = compute_onsupport(art.rewards)
 
-    # Canonical keys (underscored) for reporting/markdown
     out["off_support"] = off
     out["tail_var"] = compute_tail_var(art.rewards)
     out["on_support"] = on
@@ -150,64 +190,77 @@ def evaluate_artifacts(art: ArtifactsV1) -> Dict[str, Any]:
         prompts=art.prompts,
         completions=art.completions,
         rewards=art.rewards,
-        extra=art.extra,
+        extra=extra,
     )
-
-    out["win_rate"] = compute_win_rate(art.rewards, art.extra)
+    out["win_rate"] = compute_win_rate(art.rewards, extra)
 
     if art.method_key in (METRIC_BY_KEY["kl"].na_for_method_keys or []):
         out["kl"] = _na()
     else:
-        # compute_kl() must be the single source of truth for table KL value.
-        out["kl"] = compute_kl(art.extra)
+        # compute_kl() is SSOT for Table 1 KL column.
+        out["kl"] = compute_kl(extra)
 
     # --------------------------
     # Phase B-1 invariant: PPL must exist for ALL methods
     # --------------------------
     out["ppl"] = _compute_ppl_fallback(art, out)
 
-    # Notes must exist per-seed (DoD)
-    out["notes"] = "-"
-
     # ---- PPO-family diagnostics policy
     # DoD fix: adaptive_rm_ppo must behave like PPO-family for Table 2-A.
     is_ppo_like = bool(getattr(method, "is_ppo_family", False)) or (art.method_key == "adaptive_rm_ppo")
 
-    extra = art.extra or {}
-
     # --------------------------
     # Table 2-A (Audit-friendly PPO diagnostics)
+    #
+    # Critical policy:
+    #   - If PPO-family training was NOT executed (skipped or steps==0),
+    #     Table 2-A MUST be N/A (not 0.0). 0.0 is misleading in audits.
     # --------------------------
     if is_ppo_like:
-        # Prefer HF-style audit fields when present; fall back to best-effort.
-        ppo_loss = _get_extra_float(extra, "ppo_loss")
-        ratio_mean = _get_extra_float(extra, "ratio_mean")
-        clipfrac = _get_extra_float(extra, "clipfrac")
+        if not training_executed:
+            # Training not executed -> audit metrics are not applicable.
+            out["ppo_loss"] = _na()
+            out["ratio_mean"] = _na()
+            out["clipfrac"] = _na()
+            out["kl_ref_abs"] = _na()
+            out["kl_ref_sq"] = _na()
 
-        kl_ref_abs = _get_extra_float(extra, "kl_ref_abs")
-        kl_ref_sq = _get_extra_float(extra, "kl_ref_sq")
+            # Diagnostics tied to training dynamics should also be N/A.
+            out["kl_stability"] = _na()
+            out["convergence_speed"] = _na()
 
-        # Best-effort fallback for abs/sq proxies if missing.
-        # (Never invent if KL itself is N/A.)
-        if kl_ref_abs is None:
-            kl_val = out.get("kl")
-            kl_num = _finite_or_none(_as_float(kl_val)) if not _is_na(kl_val) else None
-            if kl_num is not None:
-                kl_ref_abs = abs(float(kl_num))
+            # Reward variance is still well-defined from produced rewards.
+            out["reward_var"] = compute_reward_var(art.rewards)
+        else:
+            # Prefer HF-style audit fields when present; fall back to best-effort.
+            ppo_loss = _get_extra_float(extra, "ppo_loss")
+            ratio_mean = _get_extra_float(extra, "ratio_mean")
+            clipfrac = _get_extra_float(extra, "clipfrac")
 
-        if kl_ref_sq is None and kl_ref_abs is not None:
-            kl_ref_sq = float(kl_ref_abs) * float(kl_ref_abs)
+            kl_ref_abs = _get_extra_float(extra, "kl_ref_abs")
+            kl_ref_sq = _get_extra_float(extra, "kl_ref_sq")
 
-        out["ppo_loss"] = _finite_or_na(ppo_loss)
-        out["ratio_mean"] = _finite_or_na(ratio_mean)
-        out["clipfrac"] = _finite_or_na(clipfrac)
-        out["kl_ref_abs"] = _finite_or_na(kl_ref_abs)
-        out["kl_ref_sq"] = _finite_or_na(kl_ref_sq)
+            # Best-effort fallback for abs/sq proxies if missing.
+            # (Never invent if KL itself is N/A.)
+            if kl_ref_abs is None:
+                kl_val = out.get("kl")
+                kl_num = _finite_or_none(_as_float(kl_val)) if not _is_na(kl_val) else None
+                if kl_num is not None:
+                    kl_ref_abs = abs(float(kl_num))
 
-        # Keep legacy diagnostics too (harmless even if markdown doesn't show them).
-        out["kl_stability"] = compute_kl_stability(extra)  # float (may be NaN)
-        out["reward_var"] = compute_reward_var(art.rewards)  # float
-        out["convergence_speed"] = compute_convergence_speed(extra)  # float (may be NaN)
+            if kl_ref_sq is None and kl_ref_abs is not None:
+                kl_ref_sq = float(kl_ref_abs) * float(kl_ref_abs)
+
+            out["ppo_loss"] = _finite_or_na(ppo_loss)
+            out["ratio_mean"] = _finite_or_na(ratio_mean)
+            out["clipfrac"] = _finite_or_na(clipfrac)
+            out["kl_ref_abs"] = _finite_or_na(kl_ref_abs)
+            out["kl_ref_sq"] = _finite_or_na(kl_ref_sq)
+
+            # Keep legacy diagnostics too (harmless even if markdown doesn't show them).
+            out["kl_stability"] = compute_kl_stability(extra)  # float (may be NaN)
+            out["reward_var"] = compute_reward_var(art.rewards)  # float
+            out["convergence_speed"] = compute_convergence_speed(extra)  # float (may be NaN)
     else:
         out["ppo_loss"] = _na()
         out["ratio_mean"] = _na()
@@ -233,6 +286,9 @@ def evaluate_artifacts(art: ArtifactsV1) -> Dict[str, Any]:
 
     # --------------------------
     # Table 2-C (Safety / robustness)
+    #
+    # Note: Even if training is skipped, these can still be computed from
+    # generated completions/rewards, so we keep them enabled for PPO-family.
     # --------------------------
     if getattr(method, "is_safety", False) or is_ppo_like:
         out["prompt_injection"] = compute_prompt_injection(art.prompts, art.completions, extra)
@@ -281,7 +337,6 @@ def build_table_rows(aggregated: Dict[str, Dict[str, Any]]) -> Dict[str, List[Li
             ]
         )
 
-        # Table 2-A (audit-style PPO diagnostics)
         rows["table2a"].append(
             [
                 m.name,
