@@ -97,28 +97,45 @@ TABLE1_METRICS: List[MetricSpec] = [
     MetricSpec(key="notes", name="Notes", dtype="str", in_table1=True),
 ]
 
-# Table 2-A（PPO-family diagnostics）
+# Table 2-A（PPO-family diagnostics / audit）
+# NOTE:
+# - PPO-family の「監査用」診断を SSOT 化する
+# - markdown/reporting で既に使っている 5キーに合わせる
 TABLE2A_METRICS: List[MetricSpec] = [
     MetricSpec(
-        key="kl_stability",
-        name="KL Stability ↓",
+        key="ppo_loss",
+        name="PPO Loss ↓",
         direction="↓",
         in_table2a=True,
-        na_for_method_keys=NON_PPO,  # PPO以外はN/A
+        na_for_method_keys=NON_PPO,
     ),
     MetricSpec(
-        key="reward_var",
-        name="Reward Var ↓",
+        key="ratio_mean",
+        name="Ratio Mean",
+        direction=None,  # "≈1" が望ましいため矢印は付けない
+        in_table2a=True,
+        na_for_method_keys=NON_PPO,
+    ),
+    MetricSpec(
+        key="clipfrac",
+        name="Clip Fraction ↓",
         direction="↓",
         in_table2a=True,
-        na_for_method_keys=NON_PPO,  # PPO以外はN/A
+        na_for_method_keys=NON_PPO,
     ),
     MetricSpec(
-        key="convergence_speed",
-        name="Convergence Speed ↑",
-        direction="↑",
+        key="kl_ref_abs",
+        name="KL Ref Abs ↓",
+        direction="↓",
         in_table2a=True,
-        na_for_method_keys=NON_PPO,  # PPO以外はN/A
+        na_for_method_keys=NON_PPO,
+    ),
+    MetricSpec(
+        key="kl_ref_sq",
+        name="KL Ref Sq ↓",
+        direction="↓",
+        in_table2a=True,
+        na_for_method_keys=NON_PPO,
     ),
 ]
 

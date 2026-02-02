@@ -151,6 +151,45 @@ def _choose_nonneg_kl_proxy(extra: Dict[str, Any]) -> float:
     return 0.0
 
 
+def _stamp_ppo_audit_from_fallback(extra: Dict[str, Any], ppo_out: Dict[str, Any]) -> None:
+    """
+    Map fallback PPO outputs to standardized audit keys (Table 2-A SSOT):
+      - ppo_loss
+      - ratio_mean
+      - clipfrac
+      - kl_ref_abs
+      - kl_ref_sq
+
+    Fallback does not implement logprob-ratio based diagnostics, so we provide
+    explicit, auditable defaults:
+      ratio_mean = 1.0, clipfrac = 0.0, ratio_mean_pre = 1.0
+    """
+    # ppo_loss: fallback typically returns "loss"
+    extra["ppo_loss"] = float(_as_float(ppo_out.get("ppo_loss", ppo_out.get("loss", 0.0)), 0.0))
+
+    # ratio_mean / clipfrac: not available in fallback -> stable defaults
+    extra["ratio_mean"] = float(_as_float(ppo_out.get("ratio_mean", 1.0), 1.0))
+    extra.setdefault("ratio_mean_pre", 1.0)
+    extra["clipfrac"] = float(_as_float(ppo_out.get("clipfrac", 0.0), 0.0))
+
+    # KL proxy: prefer kl_mean, else kl, else kl_sum/token_count
+    kl_mean = ppo_out.get("kl_mean", None)
+    if kl_mean is not None:
+        kl_signed = float(_as_float(kl_mean, 0.0))
+    else:
+        kl_v = ppo_out.get("kl", None)
+        if kl_v is not None:
+            kl_signed = float(_as_float(kl_v, 0.0))
+        else:
+            kl_sum = float(_as_float(ppo_out.get("kl_sum", 0.0), 0.0))
+            token_count = float(_as_float(ppo_out.get("token_count", 0.0), 0.0))
+            kl_signed = kl_sum / token_count if token_count > 0.0 else kl_sum
+
+    kl_abs = abs(float(kl_signed))
+    extra["kl_ref_abs"] = float(kl_abs)
+    extra["kl_ref_sq"] = float(kl_abs * kl_abs)
+
+
 def _kl_beta_adapt_update(
     beta_pre: float,
     ppo_out: Dict[str, Any],
@@ -429,14 +468,12 @@ def run_cmd(args) -> int:
                     )
                     last_out = {k: float(v) for k, v in out.items()}
 
+                # Raw dump + standardized audit stamping (Table 2-A SSOT)
                 extra.update(last_out)
+                _stamp_ppo_audit_from_fallback(extra, last_out)
 
-                if "kl_sum" in extra:
-                    extra["kl"] = float(extra["kl_sum"])
-                elif "kl_mean" in extra:
-                    extra["kl"] = float(extra["kl_mean"])
-                else:
-                    extra["kl"] = 0.0
+                # Table 1 KL policy: prefer nonnegative proxy for stability (align with HF)
+                extra["kl"] = float(extra.get("kl_ref_abs", 0.0))
 
                 extra["steps"] = int(ppo_steps)
                 extra["kl_beta"] = float(kl_beta_eff)
