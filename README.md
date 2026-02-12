@@ -269,7 +269,6 @@ Outputs:
 | `win_rate` | Win-rate ↑ | 4 | - | dir=↑ | dtype=float |
 | `ppl` | PPL ↓ | 4 | - | dir=↓ | dtype=float |
 | `kl` | KL ↓ | 4 | methods: active_pref, dpo, ipo, orpo, rlaif, rrhf | dir=↓ | dtype=float |
-| `notes` | Notes | - | - | dtype=str |
 
 ### Table2A
 
