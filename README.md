@@ -251,6 +251,53 @@ Outputs:
 
 ---
 
+<!-- METRICS_SSOT:START -->
+
+## Metrics SSOT（registry/metrics.py から自動生成）
+
+このブロックは `python -m rlhf_eval_lab.utils.update_readme_metrics_ssot` により更新されます。
+列名・意味・N/A規約・表示桁のSSOTを README に同期します。
+
+### Table1
+
+| key | label | decimals | N/A | notes |
+|---|---|---:|---|---|
+| `offsupport` | Off-support ↓ | 4 | - | dir=↓ | dtype=float |
+| `tail_var` | Tail Var ↓ | 4 | - | dir=↓ | dtype=float |
+| `onsupport` | On-support ↑ | 4 | - | dir=↑ | dtype=float |
+| `judge` | Judge ↑ | 4 | - | dir=↑ | dtype=float |
+| `win_rate` | Win-rate ↑ | 4 | - | dir=↑ | dtype=float |
+| `ppl` | PPL ↓ | 4 | - | dir=↓ | dtype=float |
+| `kl` | KL ↓ | 4 | methods: active_pref, dpo, ipo, orpo, rlaif, rrhf | dir=↓ | dtype=float |
+| `notes` | Notes | - | - | dtype=str |
+
+### Table2A
+
+| key | label | decimals | N/A | notes |
+|---|---|---:|---|---|
+| `ppo_loss` | PPO Loss ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `ratio_mean` | Ratio Mean | 4 | methods: 7 | dtype=float |
+| `clipfrac` | Clip Fraction ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `kl_ref_abs` | KL Ref Abs ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `kl_ref_sq` | KL Ref Sq ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+
+### Table2B
+
+| key | label | decimals | N/A | notes |
+|---|---|---:|---|---|
+| `sample_efficiency` | Sample Efficiency ↑ | 4 | methods: adaptive_rm_ppo, kl_ppo_adaptive, kl_ppo_fixed, ppo_standard, safe_ppo, sft | dir=↑ | dtype=float |
+| `reward_accuracy` | Reward Accuracy ↑ | 4 | methods: adaptive_rm_ppo, kl_ppo_adaptive, kl_ppo_fixed, ppo_standard, safe_ppo, sft | dir=↑ | dtype=float |
+| `label_source` | Label Source | - | - | dtype=str |
+
+### Table2C
+
+| key | label | decimals | N/A | notes |
+|---|---|---:|---|---|
+| `prompt_injection` | Prompt Injection ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `ood_stability` | OOD Stability ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+
+<!-- METRICS_SSOT:END -->
+
 ## Quickstart (HF / Level‑C)
 
 ### 1) Install HF dependencies
@@ -323,3 +370,4 @@ See `LICENSE`.
 ## Citation
 
 See `CITATION.cff`.
+
