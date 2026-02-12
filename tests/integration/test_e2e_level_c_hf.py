@@ -18,6 +18,10 @@ def _has_transformers() -> bool:
         return False
 
 
+def _hf_tests_enabled() -> bool:
+    return os.environ.get("RUN_HF_TESTS", "").strip() == "1"
+
+
 @pytest.mark.integration
 def test_e2e_level_c_hf_preset_produces_phase_a_artifacts(tmp_path: Path) -> None:
     """
@@ -32,6 +36,10 @@ def test_e2e_level_c_hf_preset_produces_phase_a_artifacts(tmp_path: Path) -> Non
     """
     if not _has_transformers():
         pytest.skip("transformers is not installed; skip HF integration test.")
+
+    # Keep default CI / local runs fast. Enable explicitly.
+    if not _hf_tests_enabled():
+        pytest.skip("HF integration test disabled (set RUN_HF_TESTS=1 to enable).")
 
     out_dir = tmp_path / "artifacts_hf"
     out_dir.mkdir(parents=True, exist_ok=True)
