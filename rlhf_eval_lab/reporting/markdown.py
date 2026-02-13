@@ -1,10 +1,4 @@
 # rlhf_eval_lab/reporting/markdown.py
-# Purpose:
-# - Always render Table 1 / 2A / 2B / 2C (no empty cells; enforce N/A policy)
-# - Stamp provenance (backend/model/tokenizer/config_hash/git_commit/seed) into report.md
-# Notes:
-# - Prioritize the fallback sanity tier (robustness over cosmetics)
-# - HF backend metrics include proxy-KL + PPO audit diagnostics (see Interpretation)
 
 from __future__ import annotations
 
@@ -15,7 +9,8 @@ from rlhf_eval_lab.reporting.artifacts import ArtifactsV1
 
 
 def _md_table(headers: List[str], rows: List[List[str]]) -> str:
-    # Markdown table builder (enforce no empty cells: None/"" -> "N/A")
+    """Markdown table builder (enforces no empty cells: None/"" -> "N/A")."""
+
     def _cell(x: object) -> str:
         if x is None:
             return "N/A"
@@ -33,6 +28,7 @@ def _md_table(headers: List[str], rows: List[List[str]]) -> str:
 
 
 def _fmt_float(x: object, nd: int = 4) -> str:
+    """Format float with nd decimals; robustly returns N/A for None/NaN/inf/non-numeric."""
     try:
         if x is None:
             return "N/A"
@@ -229,14 +225,6 @@ def _render_interpretation_section() -> str:
     parts.append("- `↓` lower is better; `↑` higher is better.")
     parts.append("- Applicability is enforced by registry policy (column-level rules); non-applicable metrics become `N/A`.")
     parts.append("")
-    parts.append("Core metrics (Table 1):")
-    parts.append("")
-    parts.append("- **Off-support ↓**: policy drift outside the support region (proxy definitions must match the implementation in `eval/`).")
-    parts.append("- **Tail Var ↓**: variance of the reward tail (e.g. top 1%); lower implies fewer extreme spikes.")
-    parts.append("- **On-support ↑**: average reward within supported region.")
-    parts.append("- **Win-rate ↑ / Judge ↑**: comparison/judge signals when available (otherwise `N/A`).")
-    parts.append("- **KL ↓**: divergence from the reference policy (policy drift).")
-    parts.append("")
 
     # --- C1.7: Clarify HF KL proxy & PPO ratio diagnostics (pre/post) ---
     parts.append("### KL & PPO diagnostics (HF backend)")
@@ -263,10 +251,10 @@ def _render_interpretation_section() -> str:
     parts.append("### Table 2 blocks")
     parts.append("")
     parts.append(
-        "- **Table 2-A**: PPO-family audit diagnostics (`ppo_loss`, `ratio_mean`, `clipfrac`, `kl_ref_abs`, `kl_ref_sq`). "
-        "Non-PPO methods are `N/A` by policy."
+        "- **Table 2-A**: PPO-family audit diagnostics. Non-PPO methods are `N/A` by policy "
+        "(and PPO-like may be `N/A` when training is skipped)."
     )
-    parts.append("- **Table 2-B**: diagnostics meaningful only for Preference/Active methods (label source is `pref` / `ai`).")
+    parts.append("- **Table 2-B**: diagnostics meaningful only for Preference/Active methods.")
     parts.append("- **Table 2-C**: safety/robustness diagnostics (may be `N/A` depending on dataset/method).")
     parts.append("")
     return "\n".join(parts)
@@ -283,7 +271,170 @@ def _stable_items(aggregated: Dict[str, Dict[str, Any]]) -> List[Tuple[str, Dict
     return sorted(aggregated.items(), key=lambda kv: kv[0])
 
 
-# ===== Public API (SSOT) =====
+def _table_flag_attr(table_id: str) -> str:
+    """Map a table id to MetricSpec boolean membership attribute name."""
+    t = table_id.strip().lower()
+    if t in {"table1", "t1", "1", "table_1", "table-1"}:
+        return "in_table1"
+    if t in {"table2a", "t2a", "2a", "table_2a", "table-2a"}:
+        return "in_table2a"
+    if t in {"table2b", "t2b", "2b", "table_2b", "table-2b"}:
+        return "in_table2b"
+    if t in {"table2c", "t2c", "2c", "table_2c", "table-2c"}:
+        return "in_table2c"
+    raise ValueError(f"Unknown table id: {table_id}")
+
+
+def _metric_specs_for_table(table_id: str) -> List[Any]:
+    """Return MetricSpec list for the given table id, preserving registry order."""
+    from rlhf_eval_lab.registry import metrics as reg  # local import to avoid import-time cycles
+
+    if not hasattr(reg, "METRIC_SPECS"):
+        raise RuntimeError("registry.metrics has no METRIC_SPECS")
+
+    specs = getattr(reg, "METRIC_SPECS")
+    if not isinstance(specs, list):
+        # In this project, METRIC_SPECS is expected to be a list of MetricSpec.
+        raise RuntimeError(f"METRIC_SPECS must be a list, got: {type(specs)}")
+
+    attr = _table_flag_attr(table_id)
+    out: List[Any] = []
+    for s in specs:
+        if hasattr(s, attr) and bool(getattr(s, attr)):
+            out.append(s)
+    return out
+
+
+def _spec_key(spec: Any) -> str:
+    if hasattr(spec, "key"):
+        return str(getattr(spec, "key"))
+    raise RuntimeError(f"MetricSpec has no .key: type={type(spec)}")
+
+
+def _spec_name(spec: Any) -> str:
+    # MetricSpec uses `.name` as a human label.
+    if hasattr(spec, "name"):
+        return str(getattr(spec, "name"))
+    return _spec_key(spec)
+
+
+def _spec_dtype(spec: Any) -> str:
+    if hasattr(spec, "dtype"):
+        return str(getattr(spec, "dtype"))
+    return "float"
+
+
+def _spec_decimals(spec: Any) -> int:
+    # Prefer explicit decimals-like fields if they exist on MetricSpec.
+    for attr in ("decimals", "precision", "digits", "ndigits"):
+        if hasattr(spec, attr):
+            v = getattr(spec, attr)
+            if v is not None:
+                try:
+                    return int(v)
+                except Exception:
+                    pass
+
+    # Otherwise infer from dtype (must match README generator's default policy).
+    dt = _spec_dtype(spec).lower()
+    if "int" in dt:
+        return 0
+    if "float" in dt:
+        return 4
+    return 4
+
+
+def _fmt_by_spec(spec: Any, value: object) -> str:
+    """Format a metric value using MetricSpec dtype + decimals policy."""
+    dt = _spec_dtype(spec).lower()
+    if dt in {"str", "string", "text"}:
+        return _as_str(value)
+    if "int" in dt:
+        # Use float formatter with 0 decimals to avoid empty cells and keep a single policy.
+        return _fmt_float(value, 0)
+    # Default: float-like.
+    return _fmt_float(value, _spec_decimals(spec))
+
+
+def _render_table_1(aggregated: Dict[str, Dict[str, Any]]) -> str:
+    specs = _metric_specs_for_table("Table1")
+    headers = ["Category", "Method"] + [_spec_name(s) for s in specs] + ["Notes"]
+
+    rows: List[List[str]] = []
+    for method_key, metrics in _stable_items(aggregated):
+        metric_cells = [_fmt_by_spec(s, metrics.get(_spec_key(s))) for s in specs]
+        rows.append(
+            [
+                _as_str(metrics.get("category")),
+                _method_label(method_key, metrics),
+                *metric_cells,
+                _as_str(metrics.get("notes")),
+            ]
+        )
+    return "\n".join(
+        [
+            "## 🟦 Table 1：Unified Comparison (Main Results)",
+            _md_table(headers, rows),
+            "",
+        ]
+    )
+
+
+def _render_table_2a(aggregated: Dict[str, Dict[str, Any]]) -> str:
+    specs = _metric_specs_for_table("Table2A")
+    headers = ["Method"] + [_spec_name(s) for s in specs]
+
+    rows: List[List[str]] = []
+    for method_key, metrics in _stable_items(aggregated):
+        metric_cells = [_fmt_by_spec(s, metrics.get(_spec_key(s))) for s in specs]
+        rows.append([_method_label(method_key, metrics), *metric_cells])
+
+    return "\n".join(
+        [
+            "## 🟩 Table 2-A：PPO-family Diagnostics (Audit)",
+            _md_table(headers, rows),
+            "",
+        ]
+    )
+
+
+def _render_table_2b(aggregated: Dict[str, Dict[str, Any]]) -> str:
+    specs = _metric_specs_for_table("Table2B")
+    headers = ["Method"] + [_spec_name(s) for s in specs]
+
+    rows: List[List[str]] = []
+    for method_key, metrics in _stable_items(aggregated):
+        metric_cells = [_fmt_by_spec(s, metrics.get(_spec_key(s))) for s in specs]
+        rows.append([_method_label(method_key, metrics), *metric_cells])
+
+    return "\n".join(
+        [
+            "## 🟨 Table 2-B：Preference-based Diagnostics",
+            _md_table(headers, rows),
+            "",
+        ]
+    )
+
+
+def _render_table_2c(aggregated: Dict[str, Dict[str, Any]]) -> str:
+    specs = _metric_specs_for_table("Table2C")
+    headers = ["Method"] + [_spec_name(s) for s in specs]
+
+    rows: List[List[str]] = []
+    for method_key, metrics in _stable_items(aggregated):
+        metric_cells = [_fmt_by_spec(s, metrics.get(_spec_key(s))) for s in specs]
+        rows.append([_method_label(method_key, metrics), *metric_cells])
+
+    return "\n".join(
+        [
+            "## 🟥 Table 2-C：Safety / Robustness",
+            _md_table(headers, rows),
+            "",
+        ]
+    )
+
+
+# ===== Public API =====
 def render_report_markdown(
     aggregated: Dict[str, Dict[str, Any]],
     artifacts: Sequence[ArtifactsV1],
@@ -296,97 +447,16 @@ def render_report_markdown(
     """
     parts: List[str] = []
 
-    # Phase B-2: Interpretation (fixed semantics)
+    # Fixed interpretation section (stable semantics).
     parts.append(_render_interpretation_section())
 
-    # Table 1
-    parts.append("## 🟦 Table 1：Unified Comparison (Main Results)")
-    t1_headers = [
-        "Category",
-        "Method",
-        "Off-support ↓",
-        "Tail Var ↓",
-        "On-support ↑",
-        "Judge ↑",
-        "Win-rate ↑",
-        "KL ↓",
-        "Notes",
-    ]
-    t1_rows: List[List[str]] = []
-    for method_key, metrics in _stable_items(aggregated):
-        t1_rows.append(
-            [
-                _as_str(metrics.get("category")),
-                _method_label(method_key, metrics),
-                _fmt_float(metrics.get("off_support"), 4),
-                _fmt_float(metrics.get("tail_var"), 4),
-                _fmt_float(metrics.get("on_support"), 4),
-                _fmt_float(metrics.get("judge"), 4),
-                _fmt_float(metrics.get("win_rate"), 4),
-                _fmt_float(metrics.get("kl"), 4),
-                _as_str(metrics.get("notes")),
-            ]
-        )
-    parts.append(_md_table(t1_headers, t1_rows))
-    parts.append("")
+    # Tables are SSOT-driven via registry.metrics.METRIC_SPECS.
+    parts.append(_render_table_1(aggregated))
+    parts.append(_render_table_2a(aggregated))
+    parts.append(_render_table_2b(aggregated))
+    parts.append(_render_table_2c(aggregated))
 
-    # Table 2-A (C1.9-ready: expose PPO audit diagnostics if available)
-    parts.append("## 🟩 Table 2-A：PPO-family Diagnostics (Audit)")
-    t2a_headers = [
-        "Method",
-        "PPO loss ↓",
-        "Ratio mean",
-        "Clipfrac ↓",
-        "KL abs ↓",
-        "KL sq ↓",
-    ]
-    t2a_rows: List[List[str]] = []
-    for method_key, metrics in _stable_items(aggregated):
-        t2a_rows.append(
-            [
-                _method_label(method_key, metrics),
-                _fmt_float(metrics.get("ppo_loss"), 6),
-                _fmt_float(metrics.get("ratio_mean"), 6),
-                _fmt_float(metrics.get("clipfrac"), 6),
-                _fmt_float(metrics.get("kl_ref_abs"), 6),
-                _fmt_float(metrics.get("kl_ref_sq"), 6),
-            ]
-        )
-    parts.append(_md_table(t2a_headers, t2a_rows))
-    parts.append("")
-
-    # Table 2-B
-    parts.append("## 🟨 Table 2-B：Preference-based Diagnostics")
-    t2b_headers = ["Method", "Sample Efficiency", "Reward Accuracy", "Label Source"]
-    t2b_rows: List[List[str]] = []
-    for method_key, metrics in _stable_items(aggregated):
-        t2b_rows.append(
-            [
-                _method_label(method_key, metrics),
-                _fmt_float(metrics.get("sample_efficiency"), 4),
-                _fmt_float(metrics.get("reward_accuracy"), 4),
-                _as_str(metrics.get("label_source")),
-            ]
-        )
-    parts.append(_md_table(t2b_headers, t2b_rows))
-    parts.append("")
-
-    # Table 2-C
-    parts.append("## 🟥 Table 2-C：Safety / Robustness")
-    t2c_headers = ["Method", "Prompt Injection", "OOD Stability"]
-    t2c_rows: List[List[str]] = []
-    for method_key, metrics in _stable_items(aggregated):
-        t2c_rows.append(
-            [
-                _method_label(method_key, metrics),
-                _fmt_float(metrics.get("prompt_injection"), 4),
-                _fmt_float(metrics.get("ood_stability"), 4),
-            ]
-        )
-    parts.append(_md_table(t2c_headers, t2c_rows))
-    parts.append("")
-
-    # Provenance
+    # Provenance (strict / self-auditable).
     parts.append(_render_provenance_section(artifacts))
     parts.append("")
 
