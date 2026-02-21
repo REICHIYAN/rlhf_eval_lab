@@ -277,48 +277,48 @@ Outputs:
 
 <!-- METRICS_SSOT:START -->
 
-## Metrics SSOT (auto-generated from registry/metrics.py)
+## Metrics SSOT（Automatically generated from registry/metrics.py）
 
 This block is updated by `python -m rlhf_eval_lab.utils.update_readme_metrics_ssot`.
-It syncs the README with the SSOT for column names, meanings, `N/A` rules, and display precision.
+It synchronises the SSOT for column names, meanings, N/A conventions, and display digits with the README.
 
-### Table 1
+### Table1
 
-| key          | label          | decimals | N/A                                               | notes |             |
-| ------------ | -------------- | -------: | ------------------------------------------------- | ----- | ----------- |
-| `offsupport` | Off-support ↓  |        4 | -                                                 | dir=↓ | dtype=float |
-| `tail_var`   | Tail Var ↓     |        4 | -                                                 | dir=↓ | dtype=float |
-| `onsupport`  | On-support ↑   |        4 | -                                                 | dir=↑ | dtype=float |
-| `judge`      | Judge ↑        |        4 | -                                                 | dir=↑ | dtype=float |
-| `win_rate`   | Win-rate ↑     |        4 | -                                                 | dir=↑ | dtype=float |
-| `ppl`        | PPL ↓          |        4 | -                                                 | dir=↓ | dtype=float |
-| `kl`         | KL ↓           |        4 | methods: active_pref, dpo, ipo, orpo, rlaif, rrhf | dir=↓ | dtype=float |
-| `latency_ms` | Latency (ms) ↓ |        0 | -                                                 | dir=↓ | dtype=int   |
+| key | label | decimals | N/A | notes |
+|---|---|---:|---|---|
+| `offsupport` | Off-support ↓ | 4 | - | dir=↓ | dtype=float |
+| `tail_var` | Tail Var ↓ | 4 | - | dir=↓ | dtype=float |
+| `onsupport` | On-support ↑ | 4 | - | dir=↑ | dtype=float |
+| `judge` | Judge ↑ | 4 | - | dir=↑ | dtype=float |
+| `win_rate` | Win-rate ↑ | 4 | - | dir=↑ | dtype=float |
+| `ppl` | PPL ↓ | 4 | - | dir=↓ | dtype=float |
+| `kl` | KL ↓ | 4 | methods: active_pref, dpo, ipo, orpo, rlaif, rrhf | dir=↓ | dtype=float |
+| `latency_ms` | Latency (ms) ↓ | 0 | - | dir=↓ | dtype=int |
 
-### Table 2-A
+### Table2A
 
-| key          | label           | decimals | N/A        | notes       |             |
-| ------------ | --------------- | -------: | ---------- | ----------- | ----------- |
-| `ppo_loss`   | PPO Loss ↓      |        4 | methods: 7 | dir=↓       | dtype=float |
-| `ratio_mean` | Ratio Mean      |        4 | methods: 7 | dtype=float |             |
-| `clipfrac`   | Clip Fraction ↓ |        4 | methods: 7 | dir=↓       | dtype=float |
-| `kl_ref_abs` | KL Ref Abs ↓    |        4 | methods: 7 | dir=↓       | dtype=float |
-| `kl_ref_sq`  | KL Ref Sq ↓     |        4 | methods: 7 | dir=↓       | dtype=float |
+| key | label | decimals | N/A | notes |
+|---|---|---:|---|---|
+| `ppo_loss` | PPO Loss ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `ratio_mean` | Ratio Mean | 4 | methods: 7 | dtype=float |
+| `clipfrac` | Clip Fraction ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `kl_ref_abs` | KL Ref Abs ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `kl_ref_sq` | KL Ref Sq ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
 
-### Table 2-B
+### Table2B
 
-| key                 | label               | decimals | N/A                                                                                  | notes     |             |
-| ------------------- | ------------------- | -------: | ------------------------------------------------------------------------------------ | --------- | ----------- |
-| `sample_efficiency` | Sample Efficiency ↑ |        4 | methods: adaptive_rm_ppo, kl_ppo_adaptive, kl_ppo_fixed, ppo_standard, safe_ppo, sft | dir=↑     | dtype=float |
-| `reward_accuracy`   | Reward Accuracy ↑   |        4 | methods: adaptive_rm_ppo, kl_ppo_adaptive, kl_ppo_fixed, ppo_standard, safe_ppo, sft | dir=↑     | dtype=float |
-| `label_source`      | Label Source        |        - | -                                                                                    | dtype=str |             |
+| key | label | decimals | N/A | notes |
+|---|---|---:|---|---|
+| `sample_efficiency` | Sample Efficiency ↑ | 4 | methods: adaptive_rm_ppo, kl_ppo_adaptive, kl_ppo_fixed, ppo_standard, safe_ppo, sft | dir=↑ | dtype=float |
+| `reward_accuracy` | Reward Accuracy ↑ | 4 | methods: adaptive_rm_ppo, kl_ppo_adaptive, kl_ppo_fixed, ppo_standard, safe_ppo, sft | dir=↑ | dtype=float |
+| `label_source` | Label Source | - | - | dtype=str |
 
-### Table 2-C
+### Table2C
 
-| key                | label              | decimals | N/A        | notes |             |
-| ------------------ | ------------------ | -------: | ---------- | ----- | ----------- |
-| `prompt_injection` | Prompt Injection ↓ |        4 | methods: 7 | dir=↓ | dtype=float |
-| `ood_stability`    | OOD Stability ↓    |        4 | methods: 7 | dir=↓ | dtype=float |
+| key | label | decimals | N/A | notes |
+|---|---|---:|---|---|
+| `prompt_injection` | Prompt Injection ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `ood_stability` | OOD Stability ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
 
 <!-- METRICS_SSOT:END -->
 
@@ -368,15 +368,15 @@ pytest -q
 
 ### Reliability track (DoD)
 
-* Done: Bundled offline dataset + preset + E2E integration test (`offline_hh_small`)
-* Planned: README polish (keep SSOT consistent with code + report interpretation)
-* Planned: Release ritual (CHANGELOG, version pin, tag)
+* ✅ Bundled offline dataset + preset + E2E integration test (`offline_hh_small`)
+* ⏳ README polish (keep SSOT consistent with code + report interpretation)
+* ⏳ Release ritual (CHANGELOG, version pin, tag)
 
 ### Research track (Level-C)
 
-* Done: HF audit semantics documented (KL proxy + PPO ratio diagnostics)
-* Done: HF optional E2E test exists (opt-in)
-* Planned: Expand HF training coverage (KL-PPO fixed/adaptive, Safe PPO) while preserving DoD invariants
+* ✅ HF audit semantics documented (KL proxy + PPO ratio diagnostics)
+* ✅ HF optional E2E test exists (opt-in)
+* ⏳ Expand HF training coverage (KL-PPO fixed/adaptive, Safe PPO) while preserving DoD invariants
 
 ---
 
