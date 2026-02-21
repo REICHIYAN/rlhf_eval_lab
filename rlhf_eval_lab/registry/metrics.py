@@ -74,6 +74,11 @@ NON_SAFETY: List[str] = ["sft"] + PREF_FAMILY
 # SSOT: Metric list (fixed order)
 # =========================
 
+# Latency policy (B3):
+# - latency_ms: wall-clock runtime per method (ms), excluding dataset loading and one-time setup.
+# - This is defined here as SSOT intent; the MetricSpec/values are introduced in B3-1/B3-2.
+# - Do not add additional latency breakouts unless you also update the SSOT and validate rules.
+
 # Table 1 columns (fixed order)
 TABLE1_METRICS: List[MetricSpec] = [
     MetricSpec(key="offsupport", name="Off-support ↓", direction="↓", in_table1=True),
