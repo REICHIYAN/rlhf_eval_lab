@@ -277,10 +277,10 @@ Outputs:
 
 <!-- METRICS_SSOT:START -->
 
-## Metrics SSOT（Automatically generated from registry/metrics.py）
+## Metrics SSOT（registry/metrics.py から自動生成）
 
-This block is updated by `python -m rlhf_eval_lab.utils.update_readme_metrics_ssot`.
-It synchronises the SSOT for column names, meanings, N/A conventions, and display digits with the README.
+このブロックは `python -m rlhf_eval_lab.utils.update_readme_metrics_ssot` により更新されます。
+列名・意味・N/A規約・表示桁のSSOTを README に同期します。
 
 ### Table1
 
@@ -387,3 +387,4 @@ See `LICENSE`.
 ## Citation
 
 See `CITATION.cff`.
+
