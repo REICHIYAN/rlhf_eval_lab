@@ -18,7 +18,7 @@ jobs:
           python-version: "3.10"
           cache: "pip"
 
-      - name: Install package (editable)
+      - name: Install (editable)
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
@@ -42,11 +42,10 @@ jobs:
           rlhf-lab report
           rlhf-lab validate --report reports
 
-          # Safety rails: repo must remain clean (no tracked diffs, no untracked except ignored)
           git diff --exit-code
           test -z "$(git status --porcelain)"
 
-      - name: Run tests (fallback-only)
+      - name: Unit tests
         env:
           PYTHONUNBUFFERED: "1"
         run: |
