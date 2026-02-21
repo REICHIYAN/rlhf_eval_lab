@@ -173,6 +173,15 @@ def evaluate_artifacts(art: ArtifactsV1) -> Dict[str, Any]:
     out["notes"] = "-" if not skipped else (skip_reason if skip_reason else "skipped")
 
     # --------------------------
+    # Phase B3 invariant: Latency must exist for ALL methods once enabled in MetricSpec
+    # --------------------------
+    lat = _get_extra_float(extra, "latency_ms")
+    if lat is None:
+        # Hard fail: latency is a Table 1 metric and must not be missing.
+        raise ValueError(f"Metric missing: latency_ms (method={art.method_key})")
+    out["latency_ms"] = float(lat)
+
+    # --------------------------
     # Table 1 (core)
     # --------------------------
     off = compute_offsupport(art.prompts, art.completions)
@@ -333,6 +342,7 @@ def build_table_rows(aggregated: Dict[str, Dict[str, Any]]) -> Dict[str, List[Li
                 str(a.get("win_rate", "N/A")),
                 str(a.get("kl", "N/A")),
                 str(a.get("ppl", "N/A")),
+                str(a.get("latency_ms", "N/A")),
                 str(a.get("notes", "-")) or "-",
             ]
         )
