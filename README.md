@@ -293,6 +293,7 @@ Outputs:
 | `win_rate` | Win-rate ↑ | 4 | - | dir=↑ | dtype=float |
 | `ppl` | PPL ↓ | 4 | - | dir=↓ | dtype=float |
 | `kl` | KL ↓ | 4 | methods: active_pref, dpo, ipo, orpo, rlaif, rrhf | dir=↓ | dtype=float |
+| `latency_ms` | Latency (ms) ↓ | 0 | - | dir=↓ | dtype=int |
 
 ### Table2A
 

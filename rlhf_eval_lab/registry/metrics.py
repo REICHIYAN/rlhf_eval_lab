@@ -76,8 +76,8 @@ NON_SAFETY: List[str] = ["sft"] + PREF_FAMILY
 
 # Latency policy (B3):
 # - latency_ms: wall-clock runtime per method (ms), excluding dataset loading and one-time setup.
-# - This is defined here as SSOT intent; the MetricSpec/values are introduced in B3-1/B3-2.
-# - Do not add additional latency breakouts unless you also update the SSOT and validate rules.
+# - Introduced as an artifacts extra field in B3-1.
+# - Reported as a Table 1 metric in B3-2 (dtype=int, direction=↓).
 
 # Table 1 columns (fixed order)
 TABLE1_METRICS: List[MetricSpec] = [
@@ -95,6 +95,14 @@ TABLE1_METRICS: List[MetricSpec] = [
         direction="↓",
         in_table1=True,
         na_for_method_keys=PREF_FAMILY,
+    ),
+    # Latency: method wall-clock runtime (ms), excludes dataset loading and one-time setup.
+    MetricSpec(
+        key="latency_ms",
+        name="Latency (ms) ↓",
+        dtype="int",
+        direction="↓",
+        in_table1=True,
     ),
 ]
 
