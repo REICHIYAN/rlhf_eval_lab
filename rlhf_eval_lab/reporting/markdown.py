@@ -224,6 +224,7 @@ def _render_interpretation_section() -> str:
     parts.append("")
     parts.append("- `↓` lower is better; `↑` higher is better.")
     parts.append("- Applicability is enforced by registry policy (column-level rules); non-applicable metrics become `N/A`.")
+    parts.append("- Latency (ms): wall-clock runtime per method (excludes dataset loading and one-time setup).")
     parts.append("")
 
     # --- C1.7: Clarify HF KL proxy & PPO ratio diagnostics (pre/post) ---
