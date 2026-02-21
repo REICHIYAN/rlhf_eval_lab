@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import time
 from typing import Any, Dict, Iterable, Tuple
 
 import torch
@@ -375,6 +376,9 @@ def run_cmd(args) -> int:
         # For fallback, keep per-method fresh backend for "step actually runs" invariant.
         backend = base_backend if prov_backend == "hf" else FallbackBackend(cfg)
 
+        # Measure per-method wall-clock runtime (ms), excluding dataset loading and one-time setup.
+        t0 = time.perf_counter()
+
         # HF: reset weights every method (strict isolation)
         if prov_backend == "hf":
             backend.model.load_state_dict(hf_policy_init_state)
@@ -606,7 +610,9 @@ def run_cmd(args) -> int:
                     # Populate kl metric (C1.6+): prefer nonnegative proxy for report stability
                     extra["kl"] = _choose_nonneg_kl_proxy(extra)
 
-                    if abs(extra.get("param_abs_sum_delta", 0.0)) < 1e-9 and abs(extra.get("param_sq_sum_delta", 0.0)) < 1e-9:
+                    if abs(extra.get("param_abs_sum_delta", 0.0)) < 1e-9 and abs(
+                        extra.get("param_sq_sum_delta", 0.0)
+                    ) < 1e-9:
                         print("[run][warn] HF PPO produced ~0 parameter change (check optimizer/lr/step application)")
 
                     print(
@@ -652,6 +658,11 @@ def run_cmd(args) -> int:
                 extra["steps"] = 0
                 extra["skipped"] = True
                 extra["skip_reason"] = "hf_step1_generation_only"
+
+        # Stamp latency_ms (B3-1): per-method wall-clock runtime in milliseconds.
+        # NOTE: excludes dataset loading and one-time setup by construction (timer starts inside method loop).
+        elapsed_ms = int((time.perf_counter() - t0) * 1000.0)
+        extra["latency_ms"] = float(elapsed_ms)
 
         art = ArtifactsV1(
             method_key=m.key,
