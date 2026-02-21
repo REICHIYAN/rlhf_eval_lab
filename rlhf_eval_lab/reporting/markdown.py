@@ -91,13 +91,18 @@ def _provenance_summary_strict(prows: Sequence[Dict[str, str]]) -> Dict[str, str
     Strict provenance summarizer.
 
     Policy:
-      - Each field must be either:
-          (a) exactly 1 unique non-N/A value across all methods, OR
-          (b) all N/A (unknown everywhere).
-      - Any mixing (including some N/A + some non-N/A) is a hard error.
+      - For fields other than `seed`:
+          Each field must be either:
+            (a) exactly 1 unique non-N/A value across all methods, OR
+            (b) all N/A (unknown everywhere).
+          Any mixing (including some N/A + some non-N/A) is a hard error.
+      - For `seed`:
+          Multiple non-N/A values are allowed (seed aggregation).
+          But mixing N/A and non-N/A is still a hard error.
 
     Rationale:
-      - The report must be self-auditable; partial provenance is not allowed.
+      - The report must be self-auditable; environment/provenance drift is not allowed.
+      - Seed is the only supported multi-valued field to enable multi-seed aggregation reports.
     """
     keys = ["backend", "model_id", "tokenizer", "config_hash", "git_commit", "seed"]
     out: Dict[str, str] = {}
@@ -112,16 +117,31 @@ def _provenance_summary_strict(prows: Sequence[Dict[str, str]]) -> Dict[str, str
         uniq_non = [v for v in uniq_all if v != "N/A"]
 
         if len(uniq_non) == 0:
-            # All N/A
             out[k] = "N/A"
             continue
 
+        # Reject partial provenance: some N/A + some non-N/A
+        if "N/A" in uniq_all and len(uniq_non) > 0:
+            raise ValueError(
+                "Provenance is partially missing across methods. "
+                f"field={k} unique_values={uniq_all}. "
+                "This indicates run/aggregate/report conditions are not fixed."
+            )
+
+        if k == "seed":
+            # Allow multi-seed aggregation: show sorted unique seeds as a comma list.
+            try:
+                uniq_sorted = sorted(uniq_non, key=lambda s: int(str(s)))
+            except Exception:
+                uniq_sorted = sorted(uniq_non)
+            out[k] = ",".join(uniq_sorted)
+            continue
+
+        # Non-seed fields must be single-valued
         if len(uniq_non) == 1 and len(uniq_all) == 1:
-            # Single value, no N/A
             out[k] = uniq_non[0]
             continue
 
-        # Mixed conditions OR partial provenance -> hard fail
         raise ValueError(
             "Provenance is inconsistent across methods. "
             f"field={k} unique_values={uniq_all}. "
