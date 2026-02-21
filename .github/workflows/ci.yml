@@ -41,7 +41,6 @@ jobs:
           rlhf-lab run --backend fallback --preset offline_hh_small --seed 0
           rlhf-lab report
           rlhf-lab validate --report reports
-
           git diff --exit-code
           test -z "$(git status --porcelain)"
 
