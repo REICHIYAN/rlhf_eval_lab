@@ -50,3 +50,5 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           pytest -q
+
+# ci-sanitize: touch
