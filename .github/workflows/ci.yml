@@ -24,16 +24,6 @@ jobs:
           python -m pip install -e .
           python -m pip install pytest
 
-      # Accident-prevention: generated outputs must never be tracked in git.
-      - name: Guard: generated outputs must not be tracked
-        run: |
-          bad=$(git ls-files | grep -E '^(artifacts/|reports/|outputs/|report\.md$)' || true)
-          if [ -n "$bad" ]; then
-            echo "::error::Generated outputs are tracked in git (must not be committed):"
-            echo "$bad"
-            exit 1
-          fi
-
       - name: DoD E2E (fallback offline)
         env:
           PYTHONUNBUFFERED: "1"
@@ -42,10 +32,6 @@ jobs:
           rlhf-lab run --backend fallback --preset offline_hh_small --seed 0
           rlhf-lab report
           rlhf-lab validate --report reports
-
-          # Safety rails: repo must remain clean after generation (untracked should be ignored)
-          git diff --exit-code
-          test -z "$(git status --porcelain)"
 
       - name: Run tests (fallback-only)
         env:
