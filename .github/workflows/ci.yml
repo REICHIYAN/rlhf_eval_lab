@@ -18,12 +18,13 @@ jobs:
           python-version: "3.10"
           cache: "pip"
 
-      - name: Install (editable)
+      - name: Install package (editable)
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install pytest
 
+      # Accident-prevention: generated outputs must never be tracked in git.
       - name: Guard: generated outputs must not be tracked
         run: |
           bad=$(git ls-files | grep -E '^(artifacts/|reports/|outputs/|report\.md$)' || true)
@@ -41,10 +42,12 @@ jobs:
           rlhf-lab run --backend fallback --preset offline_hh_small --seed 0
           rlhf-lab report
           rlhf-lab validate --report reports
+
+          # Safety rails: repo must remain clean after generation (untracked should be ignored)
           git diff --exit-code
           test -z "$(git status --porcelain)"
 
-      - name: Unit tests
+      - name: Run tests (fallback-only)
         env:
           PYTHONUNBUFFERED: "1"
         run: |
