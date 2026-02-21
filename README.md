@@ -5,7 +5,7 @@
 This repository is intentionally built in **two layers**:
 
 * **Layer 1 (DoD / OSS reliability, frozen):** a torch-only `fallback` backend (**no `transformers`**) that guarantees the end-to-end pipeline is *unbreakable* on CPU/CI.
-* **Layer 2 (Level‑C research, active):** an optional Hugging Face `hf` backend used for paper-grade experiments, developed on `level-c-research`.
+* **Layer 2 (Level-C research, active):** an optional Hugging Face `hf` backend used for paper-grade experiments, developed on `level-c-research`.
 
 > In the DoD layer, reported values are **sanity-tier**. They validate plumbing, determinism, and auditability — **not paper claims**.
 
@@ -17,17 +17,34 @@ On **CPU / Colab / CI**, the following commands must complete **without exceptio
 
 ```bash
 pip install -e .
-rlhf-lab run --backend fallback --seed 0
-rlhf-lab validate
+rlhf-lab run --backend fallback --preset offline_hh_small --seed 0
 rlhf-lab report
+rlhf-lab validate --report reports
 ```
+
+Notes:
+
+* `rlhf-lab validate` is strict artifact validation.
+* `rlhf-lab validate --report reports` additionally validates the **rendered** `reports/report.md` invariants (tables fully populated, `N/A` policy enforced).
 
 The generated report must satisfy **all invariants**:
 
-* Table 1 / Table 2‑A / Table 2‑B / Table 2‑C are always present
+* Table 1 / Table 2-A / Table 2-B / Table 2-C are always present
 * **No empty cells**
 * Every cell is either a **number** or column-policy **`N/A`**
 * Full provenance is recorded (**backend, model, tokenizer, config hash, git commit, seed**)
+
+---
+
+## Generated outputs & Git hygiene (non-negotiable)
+
+This repo generates outputs during normal operation:
+
+* `artifacts/` — per-method artifacts (`seed_*.json`)
+* `reports/` — aggregated Markdown report (`reports/report.md`)
+
+**Rule:** do **not** commit generated outputs (they are git-ignored by default).
+If you need to share an example report, copy it to a non-generated location (e.g. `examples/report_example.md`) instead of committing `reports/report.md`.
 
 ---
 
@@ -57,7 +74,7 @@ The generated report must satisfy **all invariants**:
 pip install -e .
 ```
 
-### Layer 2 — Level‑C Research (HF backend)
+### Layer 2 — Level-C Research (HF backend)
 
 * Requires Hugging Face dependencies (`transformers`)
 * Used only when explicitly requested (`--backend hf`)
@@ -94,7 +111,7 @@ Typical families:
 * **PPO family (sanity-tier in DoD)**
 
   * `ppo_standard`, `kl_ppo_fixed`, `kl_ppo_adaptive`, `safe_ppo`, `adaptive_rm_ppo`
-* **Preference-based methods (plumbing in DoD; expanded in Level‑C)**
+* **Preference-based methods (plumbing in DoD; expanded in Level-C)**
 
   * Must still produce artifacts + report (no empty cells), even if training is a placeholder.
 
@@ -139,14 +156,17 @@ Metric policy (including column-level `N/A`) is defined in the SSOT:
 
 ### Table 2 blocks
 
-* **Table 2‑A (PPO-family diagnostics)**: meaningful only for PPO-family methods; others are `N/A`.
-* **Table 2‑B (Preference-based diagnostics)**: meaningful only for preference/active methods; others are `N/A`.
-* **Table 2‑C (Safety / robustness)**: safety-oriented diagnostics (may be `N/A` depending on dataset/method).
+* **Table 2-A (PPO-family diagnostics)**: meaningful only for PPO-family methods; others are `N/A`.
+* **Table 2-B (Preference-based diagnostics)**: meaningful only for preference/active methods; others are `N/A`.
+* **Table 2-C (Safety / robustness)**: safety-oriented diagnostics (may be `N/A` depending on dataset/method).
 
 ### `N/A` policy
 
 `N/A` is **not missing**: it means the metric is **not applicable** to that method by design.
-Applicability is enforced by registry policy (column-level rules) and validated by `rlhf-lab validate`.
+Applicability is enforced by registry policy (column-level rules) and validated by:
+
+* `rlhf-lab validate` (artifacts)
+* `rlhf-lab validate --report reports` (artifacts + rendered report invariants)
 
 ---
 
@@ -189,7 +209,7 @@ This is the recommended starting point for **“reasonable” method-to-method c
 
 ### 2) Real research datasets (not bundled)
 
-This repository **does not bundle** HH‑RLHF / HarmBench.
+This repository **does not bundle** HH-RLHF / HarmBench.
 Paper presets assume **local JSONL files** placed under `data/` (ignored by git).
 
 Suggested placement:
@@ -231,17 +251,21 @@ HarmBench is used **strictly for evaluation** and **never for training**.
 Runs fully offline on CPU/CI and is stable enough to compare methods at a basic sanity tier.
 
 ```bash
+rm -rf artifacts reports
 rlhf-lab run --backend fallback --preset offline_hh_small --seed 0
 rlhf-lab report
-rlhf-lab validate
+rlhf-lab validate --report reports
 ```
 
-### 2) Default DoD smoke run
+### 2) Default DoD smoke run (builtin prompts)
+
+This uses a tiny built-in prompt set (3 prompts). It is primarily for quick wiring checks.
 
 ```bash
+rm -rf artifacts reports
 rlhf-lab run --backend fallback --seed 0
 rlhf-lab report
-rlhf-lab validate
+rlhf-lab validate --report reports
 ```
 
 Outputs:
@@ -297,7 +321,7 @@ Outputs:
 
 <!-- METRICS_SSOT:END -->
 
-## Quickstart (HF / Level‑C)
+## Quickstart (HF / Level-C)
 
 ### 1) Install HF dependencies
 
@@ -309,9 +333,10 @@ pip install -e .
 ### 2) Run an HF preset (example)
 
 ```bash
+rm -rf artifacts reports
 rlhf-lab run --backend hf --preset paper_hh --seed 0
 rlhf-lab report
-rlhf-lab validate
+rlhf-lab validate --report reports
 ```
 
 ---
@@ -322,14 +347,6 @@ rlhf-lab validate
 
 ```bash
 pytest -q
-```
-
-### Optional HF E2E test (explicit opt-in)
-
-HF tests are intentionally **opt-in** so CI remains fast and offline-safe.
-
-```bash
-RUN_HF_TESTS=1 pytest -q tests/integration/test_hf_e2e_optional.py
 ```
 
 ---
@@ -354,11 +371,11 @@ RUN_HF_TESTS=1 pytest -q tests/integration/test_hf_e2e_optional.py
 * ⏳ README polish (keep SSOT consistent with code + report interpretation)
 * ⏳ Release ritual (CHANGELOG, version pin, tag)
 
-### Research track (Level‑C)
+### Research track (Level-C)
 
 * ✅ HF audit semantics documented (KL proxy + PPO ratio diagnostics)
 * ✅ HF optional E2E test exists (opt-in)
-* ⏳ Expand HF training coverage (KL‑PPO fixed/adaptive, Safe PPO) while preserving DoD invariants
+* ⏳ Expand HF training coverage (KL-PPO fixed/adaptive, Safe PPO) while preserving DoD invariants
 
 ---
 
@@ -369,4 +386,3 @@ See `LICENSE`.
 ## Citation
 
 See `CITATION.cff`.
-
