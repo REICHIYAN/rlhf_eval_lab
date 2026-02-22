@@ -24,7 +24,7 @@ def test_offline_hh_small_e2e_run_report_validate() -> None:
         check=True,
     )
     subprocess.run(["rlhf-lab", "report"], check=True)
-    subprocess.run(["rlhf-lab", "validate"], check=True)
+    subprocess.run(["rlhf-lab", "validate", "--report", "reports"], check=True)
 
     assert Path("reports/report.md").exists()
 
