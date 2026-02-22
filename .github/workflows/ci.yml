@@ -18,14 +18,30 @@ jobs:
           python-version: "3.10"
           cache: "pip"
 
+      - name: Guard tracked generated outputs
+        run: python scripts/guard_no_tracked_generated.py
+
       - name: Install package (editable)
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install pytest
 
+      - name: DoD E2E (fallback offline)
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          rm -rf artifacts reports
+          rlhf-lab run --backend fallback --preset offline_hh_small --seed 0
+          rlhf-lab report
+          rlhf-lab validate --report reports
+
       - name: Run tests (fallback-only)
         env:
           PYTHONUNBUFFERED: "1"
         run: |
           pytest -q
+
+      - name: Ensure no tracked diffs
+        run: |
+          git diff --exit-code

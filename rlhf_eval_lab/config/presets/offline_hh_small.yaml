@@ -1,0 +1,15 @@
+dataset:
+  name: hh_rlhf
+  split: train
+  source: local
+  path: test_data/offline_prompts_small.jsonl
+  subsample_n: 32
+  seed: 0
+
+eval:
+  max_new_tokens: 16
+
+train:
+  sanity_ppo_steps: 2
+  hf_sft_steps: 0
+  hf_ppo_steps: 0

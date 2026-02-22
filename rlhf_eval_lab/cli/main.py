@@ -41,6 +41,18 @@ def main(argv=None) -> int:
         default=default_artifacts_dir(),
         help="Artifacts input dir (default: artifacts/)",
     )
+    p_val.add_argument(
+        "--report",
+        dest="report_dir",
+        default=None,
+        help="Reports dir to validate rendered report.md (optional)",
+    )
+    p_val.add_argument(
+        "--report_md",
+        dest="report_md",
+        default=None,
+        help="Explicit path to report.md to validate (optional; overrides --report)",
+    )
 
     # -----------------
     # report

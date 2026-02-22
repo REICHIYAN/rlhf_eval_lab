@@ -1,8 +1,4 @@
 # rlhf_eval_lab/registry/metrics.py
-# 表の「列」を定義する SSOT
-# - Table 1: main results（全手法共通）
-# - Table 2-A/B/C: family別 diagnostics
-# - N/A 規約は「列単位」で固定（ここが唯一の根拠）
 
 from __future__ import annotations
 
@@ -12,31 +8,32 @@ from typing import List, Optional
 
 @dataclass(frozen=True)
 class MetricSpec:
-    # 内部キー（Artifacts → eval → aggregate → markdown で使用）
+    # Internal key (Artifacts -> eval -> aggregate -> reporting)
     key: str
-    # 表示名（Markdown 列名）
+    # Display name (Markdown column header)
     name: str
-    # 期待する最終型（基本は float）
+    # Expected final dtype ("float" by default)
     dtype: str = "float"
-    # 良い方向（↓ or ↑）。表示用。None は表示なし
+    # Visual direction hint ("↓" / "↑" / None). Informational.
     direction: Optional[str] = None
-    # Table 1 に含めるか
+
+    # Inclusion flags by table
     in_table1: bool = False
-    # Table 2-A/B/C に含めるか（それぞれ）
     in_table2a: bool = False
     in_table2b: bool = False
     in_table2c: bool = False
-    # 列単位 N/A 規約（例：Preference系は KL を N/A）
-    # ここは「空欄禁止」設計の要
+
+    # Column-level N/A policy: methods listed here must render this metric as N/A.
+    # This is enforced by validate (and should be mirrored by eval/runner behavior).
     na_for_method_keys: Optional[List[str]] = None
 
 
 # =========================
-# SSOT: Method keys（registry/methods.py と一致させる）
+# Method families (keep in sync with registry/methods.py)
 # =========================
 
-# PPO-family（2Aが数値になり得る）
-PPO_FAMILY = [
+# PPO-family (Table 2-A can be numeric)
+PPO_FAMILY: List[str] = [
     "ppo_standard",
     "kl_ppo_fixed",
     "kl_ppo_adaptive",
@@ -44,8 +41,8 @@ PPO_FAMILY = [
     "adaptive_rm_ppo",
 ]
 
-# Preference / reward-free / active（2Bが主戦場、KLはN/Aになり得る）
-PREF_FAMILY = [
+# Preference / reward-free / active (Table 2-B is the main diagnostics area)
+PREF_FAMILY: List[str] = [
     "dpo",
     "ipo",
     "rrhf",
@@ -54,14 +51,14 @@ PREF_FAMILY = [
     "active_pref",
 ]
 
-# 非PPO（= 2A は N/A）
-NON_PPO = ["sft"] + PREF_FAMILY
+# Non-PPO => Table 2-A is N/A
+NON_PPO: List[str] = ["sft"] + PREF_FAMILY
 
-# 非Preference（= 2B は N/A）
-NON_PREF = ["sft"] + PPO_FAMILY
+# Non-Preference => Table 2-B is N/A
+NON_PREF: List[str] = ["sft"] + PPO_FAMILY
 
-# Safety/Robustness を計測する側（2Cを数値にする）
-SAFETY_FAMILY = [
+# Safety/Robustness-capable (Table 2-C can be numeric)
+SAFETY_FAMILY: List[str] = [
     "ppo_standard",
     "kl_ppo_fixed",
     "kl_ppo_adaptive",
@@ -69,22 +66,29 @@ SAFETY_FAMILY = [
     "adaptive_rm_ppo",
 ]
 
-# 2C を N/A にする側
-NON_SAFETY = ["sft"] + PREF_FAMILY
+# Non-safety => Table 2-C is N/A
+NON_SAFETY: List[str] = ["sft"] + PREF_FAMILY
 
 
 # =========================
-# SSOT: Metric list
+# SSOT: Metric list (fixed order)
 # =========================
 
-# Table 1 columns（固定順）
+# Latency policy (B3):
+# - latency_ms: wall-clock runtime per method (ms), excluding dataset loading and one-time setup.
+# - Introduced as an artifacts extra field in B3-1.
+# - Reported as a Table 1 metric in B3-2 (dtype=int, direction=↓).
+
+# Table 1 columns (fixed order)
 TABLE1_METRICS: List[MetricSpec] = [
     MetricSpec(key="offsupport", name="Off-support ↓", direction="↓", in_table1=True),
     MetricSpec(key="tail_var", name="Tail Var ↓", direction="↓", in_table1=True),
     MetricSpec(key="onsupport", name="On-support ↑", direction="↑", in_table1=True),
     MetricSpec(key="judge", name="Judge ↑", direction="↑", in_table1=True),
     MetricSpec(key="win_rate", name="Win-rate ↑", direction="↑", in_table1=True),
-    # KL は preference 系 / active 系では列規約で N/A を許可（runnerがN/Aを返す設計）
+    # PPL: must be numeric (no N/A by policy)
+    MetricSpec(key="ppl", name="PPL ↓", direction="↓", in_table1=True),
+    # KL: N/A for preference/active methods by column policy
     MetricSpec(
         key="kl",
         name="KL ↓",
@@ -92,75 +96,98 @@ TABLE1_METRICS: List[MetricSpec] = [
         in_table1=True,
         na_for_method_keys=PREF_FAMILY,
     ),
-    MetricSpec(key="notes", name="Notes", dtype="str", in_table1=True),
+    # Latency: method wall-clock runtime (ms), excludes dataset loading and one-time setup.
+    MetricSpec(
+        key="latency_ms",
+        name="Latency (ms) ↓",
+        dtype="int",
+        direction="↓",
+        in_table1=True,
+    ),
 ]
 
-# Table 2-A（PPO-family diagnostics）
+# Table 2-A (PPO-family diagnostics / audit)
 TABLE2A_METRICS: List[MetricSpec] = [
     MetricSpec(
-        key="kl_stability",
-        name="KL Stability ↓",
+        key="ppo_loss",
+        name="PPO Loss ↓",
         direction="↓",
         in_table2a=True,
-        na_for_method_keys=NON_PPO,  # PPO以外はN/A
+        na_for_method_keys=NON_PPO,
     ),
     MetricSpec(
-        key="reward_var",
-        name="Reward Var ↓",
+        key="ratio_mean",
+        name="Ratio Mean",
+        direction=None,  # target is ≈1 (no arrow)
+        in_table2a=True,
+        na_for_method_keys=NON_PPO,
+    ),
+    MetricSpec(
+        key="clipfrac",
+        name="Clip Fraction ↓",
         direction="↓",
         in_table2a=True,
-        na_for_method_keys=NON_PPO,  # PPO以外はN/A
+        na_for_method_keys=NON_PPO,
     ),
     MetricSpec(
-        key="convergence_speed",
-        name="Convergence Speed ↑",
-        direction="↑",
+        key="kl_ref_abs",
+        name="KL Ref Abs ↓",
+        direction="↓",
         in_table2a=True,
-        na_for_method_keys=NON_PPO,  # PPO以外はN/A
+        na_for_method_keys=NON_PPO,
+    ),
+    MetricSpec(
+        key="kl_ref_sq",
+        name="KL Ref Sq ↓",
+        direction="↓",
+        in_table2a=True,
+        na_for_method_keys=NON_PPO,
     ),
 ]
 
-# Table 2-B（Preference-based diagnostics）
+# Table 2-B (Preference-based diagnostics)
 TABLE2B_METRICS: List[MetricSpec] = [
     MetricSpec(
         key="sample_efficiency",
         name="Sample Efficiency ↑",
         direction="↑",
         in_table2b=True,
-        na_for_method_keys=NON_PREF,  # preference以外はN/A
+        na_for_method_keys=NON_PREF,
     ),
     MetricSpec(
         key="reward_accuracy",
         name="Reward Accuracy ↑",
         direction="↑",
         in_table2b=True,
-        na_for_method_keys=NON_PREF,  # preference以外はN/A
+        na_for_method_keys=NON_PREF,
     ),
-    # Label Source は str 列（runnerがN/A or "pref"/"ai"/"-" を返す）
+    # String column; runner returns "pref"/"ai"/"-"/"N/A"
     MetricSpec(key="label_source", name="Label Source", dtype="str", in_table2b=True),
 ]
 
-# Table 2-C（Safety / Robustness）
+# Table 2-C (Safety / Robustness)
 TABLE2C_METRICS: List[MetricSpec] = [
     MetricSpec(
         key="prompt_injection",
         name="Prompt Injection ↓",
         direction="↓",
         in_table2c=True,
-        na_for_method_keys=NON_SAFETY,  # Safety側以外はN/A
+        na_for_method_keys=NON_SAFETY,
     ),
     MetricSpec(
         key="ood_stability",
         name="OOD Stability ↓",
         direction="↓",
         in_table2c=True,
-        na_for_method_keys=NON_SAFETY,  # Safety側以外はN/A
+        na_for_method_keys=NON_SAFETY,
     ),
 ]
 
-# 全列のSSOT（順序は Table1 → 2A → 2B → 2C）
+# Full SSOT (order: Table1 -> 2A -> 2B -> 2C)
 METRIC_SPECS: List[MetricSpec] = (
     TABLE1_METRICS + TABLE2A_METRICS + TABLE2B_METRICS + TABLE2C_METRICS
 )
 
-METRIC_BY_KEY = {m.key: m for m in METRIC_SPECS}
+# Mapping helpers (backward/forward compatible names)
+METRIC_SPECS_BY_KEY = {m.key: m for m in METRIC_SPECS}
+METRIC_BY_KEY = METRIC_SPECS_BY_KEY  # alias

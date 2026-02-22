@@ -1,0 +1,7 @@
+# Default: normalize text files to LF
+* text=auto eol=lf
+
+# Keep Windows-native scripts as CRLF if you have them
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

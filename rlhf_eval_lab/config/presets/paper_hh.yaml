@@ -1,0 +1,21 @@
+# rlhf_eval_lab/config/presets/paper_hh.yaml
+# Paper preset: HH-RLHF (data not bundled; user provides path)
+
+hf:
+  model_name: gpt2
+  temperature: 1.0
+
+dataset:
+  name: hh_rlhf
+  source: local            # local | hf
+  path: data/hh_rlhf.jsonl # user-provided
+  split: train
+  subsample_n: 128
+  seed: 0
+
+eval:
+  max_new_tokens: 64
+
+train:
+  hf_sft_steps: 2
+  hf_max_seq_len: 256

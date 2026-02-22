@@ -1,0 +1,20 @@
+hf:
+  model_name: sshleifer/tiny-gpt2
+  temperature: 1.0
+
+dataset:
+  name: hh_rlhf
+  split: train
+  source: local
+  path: test_data/offline_prompts_small.jsonl
+  prompt_key: prompt
+  max_prompts: 32
+
+eval:
+  max_new_tokens: 16
+
+train:
+  hf_sft_steps: 0
+  hf_ppo_steps: 1
+  hf_ppo_method_keys:
+    - kl_ppo_fixed
