@@ -214,10 +214,10 @@ def render_metrics_ssot_block() -> str:
     tables_sorted = _sort_tables(list(grouped.keys()))
 
     lines: List[str] = []
-    lines.append("## Metrics SSOT（registry/metrics.py から自動生成）")
+    lines.append("## Metrics SSOT (auto-generated from registry/metrics.py)")
     lines.append("")
-    lines.append("このブロックは `python -m rlhf_eval_lab.utils.update_readme_metrics_ssot` により更新されます。")
-    lines.append("列名・意味・N/A規約・表示桁のSSOTを README に同期します。")
+    lines.append("This block is updated by `python -m rlhf_eval_lab.utils.update_readme_metrics_ssot`.")
+    lines.append("It synchronizes metric names, N/A policies, and formatting rules with the code SSOT.")
     lines.append("")
 
     for t in tables_sorted:
