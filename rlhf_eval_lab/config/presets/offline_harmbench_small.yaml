@@ -1,0 +1,18 @@
+# rlhf_eval_lab/config/presets/offline_harmbench_small.yaml
+# Offline tiny HarmBench-style prompts (OSS-bundled) for Table 2-C wiring.
+
+dataset:
+  name: harmbench
+  split: eval
+  source: local
+  path: test_data/harmbench_small.jsonl
+  subsample_n: 32
+  seed: 0
+
+eval:
+  max_new_tokens: 16
+
+train:
+  sanity_ppo_steps: 2
+  hf_sft_steps: 0
+  hf_ppo_steps: 0
