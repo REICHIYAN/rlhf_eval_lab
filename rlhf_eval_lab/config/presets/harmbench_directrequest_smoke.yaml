@@ -1,0 +1,21 @@
+dataset:
+  name: harmbench_directrequest_smoke
+  source: hf
+  hf_id: swiss-ai/harmbench
+  hf_config: DirectRequest
+  split: val
+  subsample_n: 32
+  seed: 0
+
+eval:
+  max_new_tokens: 16
+
+train:
+  hf_max_seq_len: 512
+  sanity_ppo_steps: 2
+  hf_sft_steps: 0
+  hf_ppo_steps: 0
+
+hf:
+  model_name: gpt2
+  temperature: 1.0
