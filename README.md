@@ -22,7 +22,7 @@ rlhf-lab report
 rlhf-lab validate --report reports
 ```
 
-### Report invariants (non-negotiable)
+### Report invariants
 
 The generated report must satisfy:
 
@@ -44,16 +44,6 @@ Run the same checks as CI (guard → DoD E2E → tests → no tracked diffs):
 
 ```bash
 make check
-```
-
-If you prefer the long form:
-
-```bash
-rm -rf artifacts reports outputs report.md
-rlhf-lab run --backend fallback --preset offline_hh_small --seed 0
-rlhf-lab report
-rlhf-lab validate --report reports
-pytest -q
 ```
 
 ---
@@ -109,8 +99,8 @@ pip install -e .
 
 This project evaluates RLHF-style methods through a common **ArtifactsV1** schema, ensuring results are comparable and auditable.
 
-* Method keys are defined in: `rlhf_eval_lab/registry/methods.py`
-* Metric policy and column-level `N/A` rules are defined in: `rlhf_eval_lab/registry/metrics.py`
+* Method keys: `rlhf_eval_lab/registry/methods.py`
+* Metric policy and column-level `N/A` rules: `rlhf_eval_lab/registry/metrics.py`
 
 The `fallback` backend provides deterministic sanity-tier implementations sufficient for:
 
@@ -147,6 +137,16 @@ If you use HarmBench, it should be used **strictly for evaluation**, never for t
 Treat local HarmBench JSONL files and generated artifacts as sensitive data depending on your environment.
 
 ---
+
+## Metrics SSOT block
+
+The Metrics SSOT section below is **auto-generated**. Do not edit it by hand.
+
+To (re)generate it:
+
+```bash
+python -m rlhf_eval_lab.utils.update_readme_metrics_ssot
+```
 
 <!-- METRICS_SSOT:START -->
 
