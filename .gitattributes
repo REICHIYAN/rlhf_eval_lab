@@ -1,7 +1,18 @@
-# Default: normalize text files to LF
+# Enforce LF in repo (avoid CRLF/LF flip-flop across Windows/WSL)
 * text=auto eol=lf
 
-# Keep Windows-native scripts as CRLF if you have them
-*.bat text eol=crlf
-*.cmd text eol=crlf
-*.ps1 text eol=crlf
+# Common text types
+*.py  text eol=lf
+*.md  text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.sh  text eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary

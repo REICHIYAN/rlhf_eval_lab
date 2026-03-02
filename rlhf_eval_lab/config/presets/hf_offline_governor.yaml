@@ -1,0 +1,57 @@
+hf:
+  model_name: sshleifer/tiny-gpt2
+  temperature: 1.0
+
+dataset:
+  name: hh_rlhf
+  split: train
+  source: local
+  path: test_data/offline_prompts_small.jsonl
+  prompt_key: prompt
+  subsample_n: 32
+  seed: 0
+
+eval:
+  max_new_tokens: 16
+
+ppo:
+  kl_beta: 0.1
+
+train:
+  hf_sft_steps: 0
+  hf_ppo_steps: 1
+  hf_ppo_method_keys:
+    - ppo_standard
+    - kl_ppo_fixed
+    - kl_ppo_adaptive
+    - governor
+
+  ppo_clip: 0.2
+  ppo_lr: 1e-6
+
+  governor:
+    kl_target: 0.08
+    kl_max: 0.50
+    off_max: 0.95
+    risk_crit: 1.20
+
+    w_kl: 1.00
+    w_off: 0.80
+    w_var: 0.30
+
+    gk_j1: 0.02
+    gk_j2: 0.02
+
+    reward_scale_min: 0.10
+    lr_scale_min: 0.05
+
+    beta_init: 0.20
+    beta_min: 1e-5
+    beta_max: 50.0
+    kp: 0.60
+    ki: 0.08
+    i_min: -5.0
+    i_max: 5.0
+    beta_gate_gain: 1.00
+
+    impulse: stop

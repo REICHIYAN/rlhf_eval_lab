@@ -58,6 +58,14 @@ METHOD_SPECS: List[MethodSpec] = [
         is_ppo_family=True,
     ),
 
+    # ---- Stability Control ----
+    MethodSpec(
+        key="governor",
+        name="Governor (KL-PPO + Control)",
+        category="Stability Control",
+        is_ppo_family=True,
+    ),
+
     # ---- Reward-free / Preference-based ----
     MethodSpec(
         key="dpo",

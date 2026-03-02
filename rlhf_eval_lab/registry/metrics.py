@@ -37,6 +37,7 @@ PPO_FAMILY: List[str] = [
     "ppo_standard",
     "kl_ppo_fixed",
     "kl_ppo_adaptive",
+    "governor",
     "safe_ppo",
     "adaptive_rm_ppo",
 ]
@@ -62,6 +63,7 @@ SAFETY_FAMILY: List[str] = [
     "ppo_standard",
     "kl_ppo_fixed",
     "kl_ppo_adaptive",
+    "governor",
     "safe_ppo",
     "adaptive_rm_ppo",
 ]

@@ -17,11 +17,13 @@ from rlhf_eval_lab.registry.methods import METHOD_SPECS
 from rlhf_eval_lab.reporting.artifacts import ArtifactsV1, write_artifacts
 from rlhf_eval_lab.reporting.provenance import build_provenance
 from rlhf_eval_lab.train.reward_models.heuristic import HeuristicRewardModel
+from rlhf_eval_lab.train.governor import run_governor
 
 _PPO_METHOD_KEYS = {
     "ppo_standard",
     "kl_ppo_fixed",
     "kl_ppo_adaptive",
+    "governor",
     "safe_ppo",
     "adaptive_rm_ppo",
 }
@@ -337,6 +339,7 @@ def run_cmd(args) -> int:
         "ppo_standard": 0.0,
         "kl_ppo_fixed": kl_beta_base,
         "kl_ppo_adaptive": kl_beta_base * 2.0,
+        "governor": kl_beta_base * 2.0,
         "safe_ppo": kl_beta_base * 5.0,
         "adaptive_rm_ppo": kl_beta_base * 1.0,
     }
@@ -456,38 +459,78 @@ def run_cmd(args) -> int:
             if m.key == "kl_ppo_adaptive":
                 # allow presets to override initial beta (HF-focused, safe default)
                 kl_beta_eff = float(train_cfg.get("kl_beta_init", kl_beta_eff))
+            if m.key == "governor":
+                # allow presets to override initial beta (governor controller uses it as beta_init)
+                kl_beta_eff = float(train_cfg.get("governor_beta_init", kl_beta_eff))
 
             if use_fallback_ppo:
                 backend.model.load_state_dict(ppo_policy_init_state)
 
-                last_out: Dict[str, float] = {}
-                for _ in range(ppo_steps):
-                    out = backend.ppo_step(
+                if m.key == "governor":
+                    # Governor wraps PPO with control (gating / integral feedback / impulse stop)
+                    completions_post, rewards_post, gov_extra = run_governor(
+                        backend=backend,
                         prompts=ppo_prompts,
                         completions=completions,
                         rewards=rewards,
-                        kl_beta=kl_beta_eff,
+                        rm=rm,
+                        max_new_tokens=max_new,
+                        train_cfg=train_cfg,
+                        steps=ppo_steps,
+                        ppo_lr_base=ppo_lr,
+                        ppo_clip_base=ppo_clip,
+                        use_fallback=True,
                         ref_state=ppo_ref_state,
-                        update_ref=False,
+                        policy_init_state=ppo_policy_init_state,
                     )
-                    last_out = {k: float(v) for k, v in out.items()}
 
-                # Raw dump + standardized audit stamping (Table 2-A SSOT)
-                extra.update(last_out)
-                _stamp_ppo_audit_from_fallback(extra, last_out)
+                    extra.update({k: v for k, v in gov_extra.items()})
+                    # Ensure Table 2-A keys exist and are stamped
+                    _stamp_ppo_audit_from_fallback(extra, extra)
 
-                # Table 1 KL policy: prefer nonnegative proxy for stability (align with HF)
-                extra["kl"] = float(extra.get("kl_ref_abs", 0.0))
+                    # Table 1 KL policy: prefer nonnegative proxy for stability (align with HF)
+                    extra["kl"] = float(extra.get("kl_ref_abs", 0.0))
+                    extra["kl_beta"] = float(extra.get("governor_beta_final", kl_beta_eff))
+                    extra["skipped"] = False
+                    extra["skip_reason"] = ""
 
-                extra["steps"] = int(ppo_steps)
-                extra["kl_beta"] = float(kl_beta_eff)
-                extra["skipped"] = False
-                extra["skip_reason"] = ""
+                    completions = list(completions_post)
+                    rewards = list(rewards_post)
 
-                print(
-                    f"[run] method={m.key} kl_beta={kl_beta_eff} steps={ppo_steps} "
-                    f"ppo_out_keys={sorted(list(last_out.keys()))}"
-                )
+                    print(
+                        f"[run] method={m.key} steps={extra.get('steps', 0)} "
+                        f"gate_mean={extra.get('governor_gate_mean', 0.0)} "
+                        f"risk_max={extra.get('governor_risk_max', 0.0)}"
+                    )
+                else:
+                    last_out: Dict[str, float] = {}
+                    for _ in range(ppo_steps):
+                        out = backend.ppo_step(
+                            prompts=ppo_prompts,
+                            completions=completions,
+                            rewards=rewards,
+                            kl_beta=kl_beta_eff,
+                            ref_state=ppo_ref_state,
+                            update_ref=False,
+                        )
+                        last_out = {k: float(v) for k, v in out.items()}
+
+                    # Raw dump + standardized audit stamping (Table 2-A SSOT)
+                    extra.update(last_out)
+                    _stamp_ppo_audit_from_fallback(extra, last_out)
+
+                    # Table 1 KL policy: prefer nonnegative proxy for stability (align with HF)
+                    extra["kl"] = float(extra.get("kl_ref_abs", 0.0))
+
+                    extra["steps"] = int(ppo_steps)
+                    extra["kl_beta"] = float(kl_beta_eff)
+                    extra["skipped"] = False
+                    extra["skip_reason"] = ""
+
+                    print(
+                        f"[run] method={m.key} kl_beta={kl_beta_eff} steps={ppo_steps} "
+                        f"ppo_out_keys={sorted(list(last_out.keys()))}"
+                    )
             else:
                 # HF: enable minimal PPO for selected methods when explicitly requested.
                 extra["ppo_clip"] = float(ppo_clip)
@@ -518,107 +561,198 @@ def run_cmd(args) -> int:
                     extra.setdefault(k, 0.0)
 
                 if (m.key in hf_ppo_method_keys) and (hf_ppo_steps > 0):
-                    # --- pre snapshot (C8) ---
-                    completions_pre = list(completions)
-                    rewards_pre = list(rewards)
+                    if m.key == "governor":
+                        # --- pre snapshot ---
+                        completions_pre = list(completions)
+                        rewards_pre = list(rewards)
 
-                    # C8++: distribution shift audit (same completions, pre)
-                    try:
-                        lp_pre_mean = _mean(backend.logprobs(ppo_prompts, completions_pre))
-                    except Exception:
-                        lp_pre_mean = 0.0
+                        # Distribution shift audit (same completions, pre)
+                        try:
+                            lp_pre_mean = _mean(backend.logprobs(ppo_prompts, completions_pre))
+                        except Exception:
+                            lp_pre_mean = 0.0
 
-                    abs_pre, sq_pre = _model_checksum(backend.model)
+                        abs_pre, sq_pre = _model_checksum(backend.model)
 
-                    last_out: Dict[str, float] = {}
-
-                    beta_init = float(kl_beta_eff)
-                    beta_audit_last: Dict[str, float] = {}
-
-                    for _ in range(int(hf_ppo_steps)):
-                        beta_pre = float(kl_beta_eff)
-
-                        out = backend.ppo_step(
+                        completions_post, rewards_post, gov_extra = run_governor(
+                            backend=backend,
                             prompts=ppo_prompts,
                             completions=completions,
                             rewards=rewards,
-                            kl_beta=beta_pre,
+                            rm=rm,
+                            max_new_tokens=max_new,
+                            train_cfg=train_cfg,
+                            steps=int(hf_ppo_steps),
+                            ppo_lr_base=ppo_lr,
+                            ppo_clip_base=ppo_clip,
+                            use_fallback=False,
                             ref_state=None,
-                            update_ref=False,
+                            policy_init_state=None,
                         )
 
-                        last_out = {k: float(v) for k, v in out.items()}
+                        abs_post, sq_post = _model_checksum(backend.model)
 
-                        # C2b: adaptive beta update (audit-first)
+                        # Distribution shift audit (same completions, post)
+                        try:
+                            lp_post_mean = _mean(backend.logprobs(ppo_prompts, completions_pre))
+                        except Exception:
+                            lp_post_mean = lp_pre_mean
+
+                        extra.update({k: v for k, v in gov_extra.items()})
+
+                        # Ensure Table 2-A keys exist even if governor path returned partial keys
+                        for k in ("ppo_loss", "ratio_mean", "clipfrac", "kl_ref_abs", "kl_ref_sq"):
+                            extra.setdefault(k, 0.0)
+
+                        extra["steps"] = int(gov_extra.get("steps", hf_ppo_steps))
+                        extra["kl_beta"] = float(gov_extra.get("governor_beta_final", kl_beta_eff))
+                        extra["skipped"] = False
+                        extra["skip_reason"] = ""
+
+                        # Parameter-change audit (C8+)
+                        extra["param_abs_sum_pre"] = float(abs_pre)
+                        extra["param_abs_sum_post"] = float(abs_post)
+                        extra["param_abs_sum_delta"] = float(abs_post - abs_pre)
+                        extra["param_sq_sum_pre"] = float(sq_pre)
+                        extra["param_sq_sum_post"] = float(sq_post)
+                        extra["param_sq_sum_delta"] = float(sq_post - sq_pre)
+
+                        # Logprob-shift audit (C8++)
+                        extra["pre_logprob_mean_on_pre"] = float(lp_pre_mean)
+                        extra["post_logprob_mean_on_pre"] = float(lp_post_mean)
+                        extra["logprob_delta_mean_on_pre"] = float(lp_post_mean - lp_pre_mean)
+
+                        extra["pre_reward_mean"] = _mean(rewards_pre)
+                        extra["post_reward_mean"] = _mean(rewards_post)
+                        extra["reward_delta_mean"] = float(extra["post_reward_mean"] - extra["pre_reward_mean"])
+
+                        n = max(1, len(completions_pre))
+                        changed = sum(
+                            1
+                            for a, b in zip(completions_pre, completions_post)
+                            if (a or "").strip() != (b or "").strip()
+                        )
+                        extra["completion_changed_frac"] = float(changed / n)
+
+                        # Store "after Governor" behavior in artifacts body
+                        completions = list(completions_post)
+                        rewards = list(rewards_post)
+
+                        # Populate kl metric (C1.6+): prefer nonnegative proxy for report stability
+                        extra["kl"] = _choose_nonneg_kl_proxy(extra)
+
+                        if abs(extra.get("param_abs_sum_delta", 0.0)) < 1e-9 and abs(
+                            extra.get("param_sq_sum_delta", 0.0)
+                        ) < 1e-9:
+                            print("[run][warn] HF Governor produced ~0 parameter change (check optimizer/lr/step application)")
+
+                        print(
+                            f"[run] method={m.key} hf_steps={hf_ppo_steps} "
+                            f"gate_mean={extra.get('governor_gate_mean', 0.0)} "
+                            f"risk_max={extra.get('governor_risk_max', 0.0)}"
+                        )
+                    else:
+                        # --- pre snapshot (C8) ---
+                        completions_pre = list(completions)
+                        rewards_pre = list(rewards)
+
+                        # C8++: distribution shift audit (same completions, pre)
+                        try:
+                            lp_pre_mean = _mean(backend.logprobs(ppo_prompts, completions_pre))
+                        except Exception:
+                            lp_pre_mean = 0.0
+
+                        abs_pre, sq_pre = _model_checksum(backend.model)
+
+                        last_out: Dict[str, float] = {}
+
+                        beta_init = float(kl_beta_eff)
+                        beta_audit_last: Dict[str, float] = {}
+
+                        for _ in range(int(hf_ppo_steps)):
+                            beta_pre = float(kl_beta_eff)
+
+                            out = backend.ppo_step(
+                                prompts=ppo_prompts,
+                                completions=completions,
+                                rewards=rewards,
+                                kl_beta=beta_pre,
+                                ref_state=None,
+                                update_ref=False,
+                            )
+
+                            last_out = {k: float(v) for k, v in out.items()}
+
+                            # C2b: adaptive beta update (audit-first)
+                            if m.key == "kl_ppo_adaptive":
+                                beta_post, beta_audit = _kl_beta_adapt_update(beta_pre, out, train_cfg)
+                                kl_beta_eff = float(beta_post)
+                                beta_audit_last = beta_audit
+
+                        abs_post, sq_post = _model_checksum(backend.model)
+
+                        # C8++: distribution shift audit (same completions, post)
+                        try:
+                            lp_post_mean = _mean(backend.logprobs(ppo_prompts, completions_pre))
+                        except Exception:
+                            lp_post_mean = lp_pre_mean
+
+                        extra.update(last_out)
+                        extra["steps"] = int(hf_ppo_steps)
+                        extra["kl_beta"] = float(kl_beta_eff)
+                        extra["skipped"] = False
+                        extra["skip_reason"] = ""
+
+                        # C2b: record beta audit fields (last step) + initial beta
                         if m.key == "kl_ppo_adaptive":
-                            beta_post, beta_audit = _kl_beta_adapt_update(beta_pre, out, train_cfg)
-                            kl_beta_eff = float(beta_post)
-                            beta_audit_last = beta_audit
+                            extra["beta_init"] = float(beta_init)
+                            extra.update({k: float(v) for k, v in beta_audit_last.items()})
 
-                    abs_post, sq_post = _model_checksum(backend.model)
+                        # Parameter-change audit (C8+)
+                        extra["param_abs_sum_pre"] = float(abs_pre)
+                        extra["param_abs_sum_post"] = float(abs_post)
+                        extra["param_abs_sum_delta"] = float(abs_post - abs_pre)
+                        extra["param_sq_sum_pre"] = float(sq_pre)
+                        extra["param_sq_sum_post"] = float(sq_post)
+                        extra["param_sq_sum_delta"] = float(sq_post - sq_pre)
 
-                    # C8++: distribution shift audit (same completions, post)
-                    try:
-                        lp_post_mean = _mean(backend.logprobs(ppo_prompts, completions_pre))
-                    except Exception:
-                        lp_post_mean = lp_pre_mean
+                        # Logprob-shift audit (C8++)
+                        extra["pre_logprob_mean_on_pre"] = float(lp_pre_mean)
+                        extra["post_logprob_mean_on_pre"] = float(lp_post_mean)
+                        extra["logprob_delta_mean_on_pre"] = float(lp_post_mean - lp_pre_mean)
 
-                    extra.update(last_out)
-                    extra["steps"] = int(hf_ppo_steps)
-                    extra["kl_beta"] = float(kl_beta_eff)
-                    extra["skipped"] = False
-                    extra["skip_reason"] = ""
+                        # After update, regenerate completions for artifacts (C8: post snapshot)
+                        completions_post = backend.generate(ppo_prompts, max_new_tokens=max_new)
+                        rewards_post = rm.score(ppo_prompts, completions_post)
 
-                    # C2b: record beta audit fields (last step) + initial beta
-                    if m.key == "kl_ppo_adaptive":
-                        extra["beta_init"] = float(beta_init)
-                        extra.update({k: float(v) for k, v in beta_audit_last.items()})
+                        extra["pre_reward_mean"] = _mean(rewards_pre)
+                        extra["post_reward_mean"] = _mean(rewards_post)
+                        extra["reward_delta_mean"] = float(extra["post_reward_mean"] - extra["pre_reward_mean"])
 
-                    # Parameter-change audit (C8+)
-                    extra["param_abs_sum_pre"] = float(abs_pre)
-                    extra["param_abs_sum_post"] = float(abs_post)
-                    extra["param_abs_sum_delta"] = float(abs_post - abs_pre)
-                    extra["param_sq_sum_pre"] = float(sq_pre)
-                    extra["param_sq_sum_post"] = float(sq_post)
-                    extra["param_sq_sum_delta"] = float(sq_post - sq_pre)
+                        n = max(1, len(completions_pre))
+                        changed = sum(
+                            1
+                            for a, b in zip(completions_pre, completions_post)
+                            if (a or "").strip() != (b or "").strip()
+                        )
+                        extra["completion_changed_frac"] = float(changed / n)
 
-                    # Logprob-shift audit (C8++)
-                    extra["pre_logprob_mean_on_pre"] = float(lp_pre_mean)
-                    extra["post_logprob_mean_on_pre"] = float(lp_post_mean)
-                    extra["logprob_delta_mean_on_pre"] = float(lp_post_mean - lp_pre_mean)
+                        # Store "after PPO" behavior in artifacts body
+                        completions = list(completions_post)
+                        rewards = list(rewards_post)
 
-                    # After update, regenerate completions for artifacts (C8: post snapshot)
-                    completions_post = backend.generate(ppo_prompts, max_new_tokens=max_new)
-                    rewards_post = rm.score(ppo_prompts, completions_post)
+                        # Populate kl metric (C1.6+): prefer nonnegative proxy for report stability
+                        extra["kl"] = _choose_nonneg_kl_proxy(extra)
 
-                    extra["pre_reward_mean"] = _mean(rewards_pre)
-                    extra["post_reward_mean"] = _mean(rewards_post)
-                    extra["reward_delta_mean"] = float(extra["post_reward_mean"] - extra["pre_reward_mean"])
+                        if abs(extra.get("param_abs_sum_delta", 0.0)) < 1e-9 and abs(
+                            extra.get("param_sq_sum_delta", 0.0)
+                        ) < 1e-9:
+                            print("[run][warn] HF PPO produced ~0 parameter change (check optimizer/lr/step application)")
 
-                    n = max(1, len(completions_pre))
-                    changed = sum(
-                        1
-                        for a, b in zip(completions_pre, completions_post)
-                        if (a or "").strip() != (b or "").strip()
-                    )
-                    extra["completion_changed_frac"] = float(changed / n)
-
-                    # Store "after PPO" behavior in artifacts body
-                    completions = list(completions_post)
-                    rewards = list(rewards_post)
-
-                    # Populate kl metric (C1.6+): prefer nonnegative proxy for report stability
-                    extra["kl"] = _choose_nonneg_kl_proxy(extra)
-
-                    if abs(extra.get("param_abs_sum_delta", 0.0)) < 1e-9 and abs(
-                        extra.get("param_sq_sum_delta", 0.0)
-                    ) < 1e-9:
-                        print("[run][warn] HF PPO produced ~0 parameter change (check optimizer/lr/step application)")
-
-                    print(
-                        f"[run] method={m.key} hf_ppo_steps={hf_ppo_steps} "
-                        f"ppo_out_keys={sorted(list(last_out.keys()))}"
-                    )
+                        print(
+                            f"[run] method={m.key} hf_ppo_steps={hf_ppo_steps} "
+                            f"ppo_out_keys={sorted(list(last_out.keys()))}"
+                        )
                 else:
                     # HF Step1: placeholders only
                     extra["kl"] = 0.0

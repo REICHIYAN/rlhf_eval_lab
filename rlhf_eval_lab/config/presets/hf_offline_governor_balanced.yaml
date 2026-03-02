@@ -1,0 +1,58 @@
+hf:
+  model_name: sshleifer/tiny-gpt2
+  temperature: 1.0
+
+dataset:
+  name: hh_rlhf
+  split: train
+  source: local
+  path: test_data/offline_prompts_small.jsonl
+  prompt_key: prompt
+  subsample_n: 128
+  seed: 0
+
+eval:
+  max_new_tokens: 32
+
+ppo:
+  kl_beta: 0.1
+
+train:
+  hf_ppo_method_keys:
+    - ppo_standard
+    - kl_ppo_fixed
+    - governor
+
+  hf_sft_steps: 0
+  hf_ppo_steps: 6
+
+  ppo_clip: 0.2
+  ppo_lr: 5e-5
+
+  governor:
+    off_max: 1.01
+    risk_crit: 999.0
+    kl_max: 5.0
+
+    # “学習できる”範囲で抑制（gateを0.6〜0.8に寄せる）
+    w_off: 0.70
+    w_kl: 0.00
+    w_var: 0.00
+
+    # GKは少し鈍く（0.05→0.10）して、強烈に閉じない
+    gk_j1: 0.10
+    gk_j2: 0.10
+
+    lr_scale_min: 0.15
+    reward_scale_min: 0.15
+
+    # betaは固定（まずgateの効果を綺麗に比較）
+    beta_init: 0.2
+    beta_min: 0.2
+    beta_max: 0.2
+    kp: 0.0
+    ki: 0.0
+    kl_target: 0.001
+    beta_gate_gain: 0.0
+
+    impulse: stop
