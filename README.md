@@ -182,8 +182,8 @@ It synchronizes metric names, N/A policies, and formatting rules with the code S
 
 | key | label | decimals | N/A | notes |
 |---|---|---:|---|---|
-| `sample_efficiency` | Sample Efficiency ↑ | 4 | methods: adaptive_rm_ppo, kl_ppo_adaptive, kl_ppo_fixed, ppo_standard, safe_ppo, sft | dir=↑ | dtype=float |
-| `reward_accuracy` | Reward Accuracy ↑ | 4 | methods: adaptive_rm_ppo, kl_ppo_adaptive, kl_ppo_fixed, ppo_standard, safe_ppo, sft | dir=↑ | dtype=float |
+| `sample_efficiency` | Sample Efficiency ↑ | 4 | methods: 7 | dir=↑ | dtype=float |
+| `reward_accuracy` | Reward Accuracy ↑ | 4 | methods: 7 | dir=↑ | dtype=float |
 | `label_source` | Label Source | - | - | dtype=str |
 
 ### Table2C
