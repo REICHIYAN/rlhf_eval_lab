@@ -1,7 +1,4 @@
 # rlhf_eval_lab/eval/diagnostics.py
-# sanity tier diagnostics
-# - numeric metrics MUST return float (never "N/A")
-# - missing information -> NaN (validate should treat as numeric value; report renders as N/A)
 
 from __future__ import annotations
 
@@ -17,12 +14,6 @@ def _to_float(x: Any) -> float:
 
 
 def compute_kl_stability(extra: Dict[str, Any]) -> float:
-    """Lower is better.
-    Sanity tier proxy:
-      - If extra contains 'kl_values' list -> return stddev
-      - Else if extra contains 'kl' scalar -> return abs(kl)
-      - Else -> NaN
-    """
     if not isinstance(extra, dict):
         return float("nan")
 
@@ -44,7 +35,6 @@ def compute_kl_stability(extra: Dict[str, Any]) -> float:
 
 
 def compute_reward_var(rewards: List[float]) -> float:
-    """Lower is better. Variance of rewards."""
     if not rewards:
         return float("nan")
     xs = [float(r) for r in rewards]
@@ -54,12 +44,6 @@ def compute_reward_var(rewards: List[float]) -> float:
 
 
 def compute_convergence_speed(extra: Dict[str, Any]) -> float:
-    """Higher is better.
-    Sanity tier proxy:
-      - If extra contains 'steps' -> use 1/steps
-      - Else if extra contains 'updates' -> use 1/updates
-      - Else -> NaN
-    """
     if not isinstance(extra, dict):
         return float("nan")
 
@@ -75,11 +59,6 @@ def compute_convergence_speed(extra: Dict[str, Any]) -> float:
 
 
 def compute_sample_efficiency(extra: Dict[str, Any]) -> float:
-    """Higher is better.
-    Sanity tier proxy:
-      - If extra contains 'pairs_used' and 'win_rate' -> win_rate / pairs_used
-      - Else -> NaN
-    """
     if not isinstance(extra, dict):
         return float("nan")
 
@@ -92,11 +71,6 @@ def compute_sample_efficiency(extra: Dict[str, Any]) -> float:
 
 
 def compute_reward_accuracy(extra: Dict[str, Any]) -> float:
-    """Higher is better.
-    Sanity tier proxy:
-      - If extra contains 'reward_accuracy' -> return it
-      - Else -> NaN
-    """
     if not isinstance(extra, dict):
         return float("nan")
 
@@ -109,11 +83,8 @@ def compute_reward_accuracy(extra: Dict[str, Any]) -> float:
 
 def label_source_for_method(method_key: str) -> str:
     """String metric. Keep deterministic."""
-    # sanity tier: methods that use AI-labeled preferences
     if method_key == "rlaif":
         return "ai"
-    # preference-based defaults to human-ish (even if synthetic in sanity tier)
-    if method_key in {"dpo", "ipo", "rrhf", "orpo", "active_pref"}:
+    if method_key in {"dpo", "aegis", "ipo", "rrhf", "orpo", "active_pref"}:
         return "pref"
-    # PPO family / SFT
     return "-"

@@ -1,18 +1,7 @@
-# Enforce LF in repo (avoid CRLF/LF flip-flop across Windows/WSL)
-* text=auto eol=lf
-
-# Common text types
-*.py  text eol=lf
-*.md  text eol=lf
+# Enforce LF for source files to avoid CRLF/LF churn (WSL + /mnt/c/).
+*.py text eol=lf
+*.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 *.toml text eol=lf
 *.txt text eol=lf
-*.sh  text eol=lf
-
-# Binary
-*.png binary
-*.jpg binary
-*.jpeg binary
-*.gif binary
-*.pdf binary

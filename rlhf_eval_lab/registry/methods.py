@@ -3,6 +3,7 @@
 # - 順序は論文・OSSともに固定
 # - ここを変えない限り、Markdown / 集計 / テストの行順は不変
 
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -73,6 +74,13 @@ METHOD_SPECS: List[MethodSpec] = [
         category="Reward-free / Preference-based",
         is_preference_based=True,
     ),
+    MethodSpec(
+        key="aegis",
+        name="Aegis",
+        category="Reward-free / Preference-based",
+        is_preference_based=True,
+    ),
+
     MethodSpec(
         key="ipo",
         name="IPO",

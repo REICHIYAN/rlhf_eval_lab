@@ -50,6 +50,7 @@ PREF_FAMILY: List[str] = [
     "orpo",
     "rlaif",
     "active_pref",
+    "aegis",
 ]
 
 # Non-PPO => Table 2-A is N/A
@@ -76,11 +77,6 @@ NON_SAFETY: List[str] = ["sft"] + PREF_FAMILY
 # SSOT: Metric list (fixed order)
 # =========================
 
-# Latency policy (B3):
-# - latency_ms: wall-clock runtime per method (ms), excluding dataset loading and one-time setup.
-# - Introduced as an artifacts extra field in B3-1.
-# - Reported as a Table 1 metric in B3-2 (dtype=int, direction=↓).
-
 # Table 1 columns (fixed order)
 TABLE1_METRICS: List[MetricSpec] = [
     MetricSpec(key="offsupport", name="Off-support ↓", direction="↓", in_table1=True),
@@ -88,9 +84,7 @@ TABLE1_METRICS: List[MetricSpec] = [
     MetricSpec(key="onsupport", name="On-support ↑", direction="↑", in_table1=True),
     MetricSpec(key="judge", name="Judge ↑", direction="↑", in_table1=True),
     MetricSpec(key="win_rate", name="Win-rate ↑", direction="↑", in_table1=True),
-    # PPL: must be numeric (no N/A by policy)
     MetricSpec(key="ppl", name="PPL ↓", direction="↓", in_table1=True),
-    # KL: N/A for preference/active methods by column policy
     MetricSpec(
         key="kl",
         name="KL ↓",
@@ -98,7 +92,6 @@ TABLE1_METRICS: List[MetricSpec] = [
         in_table1=True,
         na_for_method_keys=PREF_FAMILY,
     ),
-    # Latency: method wall-clock runtime (ms), excludes dataset loading and one-time setup.
     MetricSpec(
         key="latency_ms",
         name="Latency (ms) ↓",
@@ -120,7 +113,7 @@ TABLE2A_METRICS: List[MetricSpec] = [
     MetricSpec(
         key="ratio_mean",
         name="Ratio Mean",
-        direction=None,  # target is ≈1 (no arrow)
+        direction=None,
         in_table2a=True,
         na_for_method_keys=NON_PPO,
     ),
@@ -163,7 +156,6 @@ TABLE2B_METRICS: List[MetricSpec] = [
         in_table2b=True,
         na_for_method_keys=NON_PREF,
     ),
-    # String column; runner returns "pref"/"ai"/"-"/"N/A"
     MetricSpec(key="label_source", name="Label Source", dtype="str", in_table2b=True),
 ]
 
@@ -185,11 +177,9 @@ TABLE2C_METRICS: List[MetricSpec] = [
     ),
 ]
 
-# Full SSOT (order: Table1 -> 2A -> 2B -> 2C)
 METRIC_SPECS: List[MetricSpec] = (
     TABLE1_METRICS + TABLE2A_METRICS + TABLE2B_METRICS + TABLE2C_METRICS
 )
 
-# Mapping helpers (backward/forward compatible names)
 METRIC_SPECS_BY_KEY = {m.key: m for m in METRIC_SPECS}
 METRIC_BY_KEY = METRIC_SPECS_BY_KEY  # alias

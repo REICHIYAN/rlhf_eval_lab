@@ -16,8 +16,9 @@ from rlhf_eval_lab.data.loaders import load_prompts_from_dataset_config
 from rlhf_eval_lab.registry.methods import METHOD_SPECS
 from rlhf_eval_lab.reporting.artifacts import ArtifactsV1, write_artifacts
 from rlhf_eval_lab.reporting.provenance import build_provenance
-from rlhf_eval_lab.train.reward_models.heuristic import HeuristicRewardModel
+from rlhf_eval_lab.train.aegis import run_aegis
 from rlhf_eval_lab.train.governor import run_governor
+from rlhf_eval_lab.train.reward_models.heuristic import HeuristicRewardModel
 
 _PPO_METHOD_KEYS = {
     "ppo_standard",
@@ -644,7 +645,10 @@ def run_cmd(args) -> int:
                         if abs(extra.get("param_abs_sum_delta", 0.0)) < 1e-9 and abs(
                             extra.get("param_sq_sum_delta", 0.0)
                         ) < 1e-9:
-                            print("[run][warn] HF Governor produced ~0 parameter change (check optimizer/lr/step application)")
+                            print(
+                                "[run][warn] HF Governor produced ~0 parameter change "
+                                "(check optimizer/lr/step application)"
+                            )
 
                         print(
                             f"[run] method={m.key} hf_steps={hf_ppo_steps} "
@@ -773,12 +777,32 @@ def run_cmd(args) -> int:
             if prov_backend == "fallback":
                 # fallback: actually step
                 chosen, rejected = _make_pref_pair(prompts[0], completions[0], rewards[0])
-                loss = backend.preference_step(
-                    prompt=prompts[0],
-                    chosen=chosen,
-                    rejected=rejected,
-                    beta=pref_beta,
-                )
+
+                if m.key == "aegis":
+                    completions_post, rewards_post, aegis_extra = run_aegis(
+                        backend=backend,
+                        prompts=prompts,
+                        completions=completions,
+                        rewards=rewards,
+                        rm=rm,
+                        max_new_tokens=max_new,
+                        train_cfg=train_cfg,
+                        pref_beta=pref_beta,
+                    )
+                    extra.update(dict(aegis_extra))
+                    completions = list(completions_post)
+                    rewards = list(rewards_post)
+                    loss = float(extra.get("pref_loss", 0.0))
+                    extra.setdefault("pairs_used", 1)
+                else:
+                    loss = backend.preference_step(
+                        prompt=prompts[0],
+                        chosen=chosen,
+                        rejected=rejected,
+                        beta=pref_beta,
+                    )
+                    extra.setdefault("pairs_used", 1)
+
                 extra["pref_loss"] = float(loss)
                 extra["steps"] = 1
                 extra["pair_prompt"] = prompts[0]
@@ -792,6 +816,7 @@ def run_cmd(args) -> int:
                 extra["steps"] = 0
                 extra["skipped"] = True
                 extra["skip_reason"] = "hf_step1_generation_only"
+                extra.setdefault("pairs_used", 0)
 
         # Stamp latency_ms (B3-1): per-method wall-clock runtime in milliseconds.
         # NOTE: excludes dataset loading and one-time setup by construction (timer starts inside method loop).
