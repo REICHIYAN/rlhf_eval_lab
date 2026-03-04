@@ -165,18 +165,18 @@ It synchronizes metric names, N/A policies, and formatting rules with the code S
 | `judge` | Judge ↑ | 4 | - | dir=↑ | dtype=float |
 | `win_rate` | Win-rate ↑ | 4 | - | dir=↑ | dtype=float |
 | `ppl` | PPL ↓ | 4 | - | dir=↓ | dtype=float |
-| `kl` | KL ↓ | 4 | methods: active_pref, dpo, ipo, orpo, rlaif, rrhf | dir=↓ | dtype=float |
+| `kl` | KL ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
 | `latency_ms` | Latency (ms) ↓ | 0 | - | dir=↓ | dtype=int |
 
 ### Table2A
 
 | key | label | decimals | N/A | notes |
 |---|---|---:|---|---|
-| `ppo_loss` | PPO Loss ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
-| `ratio_mean` | Ratio Mean | 4 | methods: 7 | dtype=float |
-| `clipfrac` | Clip Fraction ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
-| `kl_ref_abs` | KL Ref Abs ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
-| `kl_ref_sq` | KL Ref Sq ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `ppo_loss` | PPO Loss ↓ | 4 | methods: 8 | dir=↓ | dtype=float |
+| `ratio_mean` | Ratio Mean | 4 | methods: 8 | dtype=float |
+| `clipfrac` | Clip Fraction ↓ | 4 | methods: 8 | dir=↓ | dtype=float |
+| `kl_ref_abs` | KL Ref Abs ↓ | 4 | methods: 8 | dir=↓ | dtype=float |
+| `kl_ref_sq` | KL Ref Sq ↓ | 4 | methods: 8 | dir=↓ | dtype=float |
 
 ### Table2B
 
@@ -190,8 +190,8 @@ It synchronizes metric names, N/A policies, and formatting rules with the code S
 
 | key | label | decimals | N/A | notes |
 |---|---|---:|---|---|
-| `prompt_injection` | Prompt Injection ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
-| `ood_stability` | OOD Stability ↓ | 4 | methods: 7 | dir=↓ | dtype=float |
+| `prompt_injection` | Prompt Injection ↓ | 4 | methods: 8 | dir=↓ | dtype=float |
+| `ood_stability` | OOD Stability ↓ | 4 | methods: 8 | dir=↓ | dtype=float |
 
 <!-- METRICS_SSOT:END -->
 
